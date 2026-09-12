@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import stat
 import tempfile
+import uuid
 
 
 _REPARSE_ATTRIBUTE = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
@@ -103,4 +105,43 @@ def application_runtime_dir(*, create=False):
     if create:
         return _create_checked_children(base, ('line-desktop-mcp', 'line-reader'))
     _verify_existing_prefix(directory)
+    return directory
+
+
+def create_reader_request_directory(runtime_dir):
+    """Claim an empty per-request directory without accepting an arbitrary path.
+
+    The Node parent normally creates it and supplies only an opaque UUID. This
+    lets the parent clean the exact directory after a forcibly terminated child.
+    Standalone Python callers create their own UUID directory instead.
+    """
+    if _verify_existing_prefix(runtime_dir) is not None:
+        raise RuntimePathError()
+    request_id = os.environ.get('LINE_MCP_READER_REQUEST_ID')
+    managed = request_id is not None
+    if managed:
+        if not re.fullmatch(r'[0-9a-f]{32}', request_id):
+            raise RuntimePathError()
+    else:
+        request_id = uuid.uuid4().hex
+    directory = runtime_dir / ('line-reader-' + request_id)
+    created_here = False
+    try:
+        if not managed:
+            directory.mkdir(mode=0o700)
+            created_here = True
+        if _verify_existing_prefix(directory) is not None:
+            raise RuntimePathError()
+        if any(directory.iterdir()):
+            raise RuntimePathError()
+    except (OSError, RuntimePathError):
+        if created_here:
+            # Creation can succeed before verification fails. Remove only our
+            # exact directory, and only if it is still safe and empty.
+            try:
+                if _verify_existing_prefix(directory) is None and not any(directory.iterdir()):
+                    directory.rmdir()
+            except (OSError, RuntimePathError):
+                pass
+        raise RuntimePathError() from None
     return directory

@@ -12,15 +12,17 @@ import os
 from pathlib import Path
 import sys
 import time
-import uuid
 
 from line_scoped_core import ReaderError, read_scoped, validate_scope
 from line_sqlite_engine import Connection
-from line_encrypted_snapshot import capture_snapshot, SnapshotError
+from line_encrypted_snapshot import (SnapshotError, load_snapshot_limits,
+                                     read_database_prefix, capture_snapshot_to,
+                                     cleanup_snapshot)
 from line_media import inspect_attachment
 from line_client_compatibility import ClientBuildError, verify_client_build
 import line_session_locator as session_locator
-from line_runtime_paths import RuntimePathError, application_runtime_dir
+from line_runtime_paths import (RuntimePathError, application_runtime_dir,
+                                create_reader_request_directory)
 
 
 def serialize_result(result):
@@ -91,6 +93,7 @@ def run(args):
     timings = {}
     request_started_at = dt.datetime.now(dt.timezone.utc).isoformat()
     validate_scope(args)  # Required before any process/filesystem reads.
+    limits = load_snapshot_limits()
     base = Path(os.environ['LOCALAPPDATA'])/'LINE'
     phase = time.perf_counter()
     try:
@@ -102,35 +105,29 @@ def run(args):
     main = [p for p in paths if not p.name.startswith(('album','chatStats','keep'))]
     if len(main) != 1:
         raise ReaderError('MAIN_DATABASE_AMBIGUOUS')
-    phase = time.perf_counter()
-    raw, wal, snapshot = capture_snapshot(main[0])
-    timings['initialSnapshotMs'] = round((time.perf_counter() - phase) * 1000, 3)
-    phase = time.perf_counter()
-    passphrase, key_metrics = acquire_passphrase(raw[:4096],base,main[0])
-    timings['keyAcquisitionMs'] = round((time.perf_counter() - phase) * 1000, 3)
-    # Initialization can be slow. Query a newly observed DB/WAL pair after it,
-    # then revalidate the session key against that pair before opening SQLite.
-    phase = time.perf_counter()
-    raw, wal, snapshot = capture_snapshot(main[0])
-    if not passphrase_matches(raw[:4096], passphrase):
-        raise ReaderError('SESSION_KEY_CHANGED')
-    timings['freshSnapshotAndValidationMs'] = round((time.perf_counter() - phase) * 1000, 3)
-    phase = time.perf_counter()
     try:
         runtime_dir = application_runtime_dir(create=True)
+        directory = create_reader_request_directory(runtime_dir)
     except RuntimePathError:
         raise ReaderError('RUNTIME_DIRECTORY_UNAVAILABLE') from None
-    directory = runtime_dir / ('line-reader-'+uuid.uuid4().hex)
-    directory.mkdir(mode=0o700)  # Only this request's transient private copy.
-    path = directory/'snapshot.edb'
+    passphrase = None
     try:
-        with path.open('xb') as stream:
-            stream.write(raw)
-        raw = None
-        if wal:
-            with Path(str(path)+'-wal').open('xb') as stream:
-                stream.write(wal)
-        wal = None
+        phase = time.perf_counter()
+        prefix = read_database_prefix(main[0], limits=limits)
+        timings['bootstrapPrefixMs'] = round((time.perf_counter() - phase) * 1000, 3)
+        phase = time.perf_counter()
+        passphrase, key_metrics = acquire_passphrase(prefix,base,main[0])
+        prefix = None
+        timings['keyAcquisitionMs'] = round((time.perf_counter() - phase) * 1000, 3)
+        # Initialization can be slow. Only this fresh, verified encrypted pair
+        # is queried; the bootstrap prefix never supplies any returned rows.
+        phase = time.perf_counter()
+        snapshot_and_query_started = phase
+        path, snapshot = capture_snapshot_to(main[0], directory, limits=limits)
+        if not passphrase_matches(read_database_prefix(path, limits=limits), passphrase):
+            raise ReaderError('SESSION_KEY_CHANGED')
+        timings['freshSnapshotAndValidationMs'] = round((time.perf_counter() - phase) * 1000, 3)
+        phase = time.perf_counter()
         with Connection(path,passphrase) as db:
             passphrase = None
             db.execute('BEGIN')
@@ -148,16 +145,24 @@ def run(args):
                                'queryCompletedAt': completed_at.isoformat(),
                                'snapshotAgeMs': round(age_ms, 3) if age_ms >= 0 else None,
                                'clockOrderValid': age_ms >= 0,
+                               'capturedAfterInitialization': True,
+                               # Legacy alias for the post-key freshness
+                               # guarantee, retained for existing clients.
                                'recapturedAfterInitialization': True,
+                               'bootstrapKind': 'stable_database_prefix',
                                'sourceCurrentAtCompletionVerified': False}
-        timings['snapshotFileAndQueryMs'] = round((time.perf_counter() - phase) * 1000, 3)
+        timings['queryMs'] = round((time.perf_counter() - phase) * 1000, 3)
+        timings['snapshotFileAndQueryMs'] = round((time.perf_counter() - snapshot_and_query_started) * 1000, 3)
     finally:
         cleanup_started = time.perf_counter()
         passphrase = None
-        # Only this request's known filenames, never a computed recursive deletion.
-        for name in ('snapshot.edb-wal','snapshot.edb-shm','snapshot.edb-journal','snapshot.edb'):
-            (directory/name).unlink(missing_ok=True)
-        directory.rmdir()
+        # The parent also cleans these exact files after child exit, including
+        # forced termination, which cannot execute this Python finally block.
+        try:
+            cleanup_snapshot(directory)
+            directory.rmdir()
+        except (OSError, SnapshotError):
+            raise ReaderError('SNAPSHOT_CLEANUP_FAILED') from None
         timings['snapshotCleanupMs'] = round((time.perf_counter() - cleanup_started) * 1000, 3)
     # A locator hint can only be stored after this new snapshot validated, the
     # scope-limited read and snapshot cleanup completed, and the final public
@@ -188,7 +193,10 @@ def main():
         print(data)
     except Exception as error:
         code = error.code if isinstance(error,(ReaderError,SnapshotError)) else 'LOCAL_READER_FAILED'
-        print(json.dumps({'ok':False,'code':code,'message':'Local LINE read did not complete; no success claimed.'}))
+        result = {'ok':False,'code':code,'message':'Local LINE read did not complete; no success claimed.'}
+        if isinstance(error, SnapshotError) and code == 'SOURCE_TOO_LARGE':
+            result['details'] = error.details
+        print(json.dumps(result))
         return 2
     return 0
 

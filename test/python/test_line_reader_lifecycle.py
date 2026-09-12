@@ -199,16 +199,22 @@ class ReaderLifecycleTests(unittest.TestCase):
         self.assertEqual(found, [])
         self.assertFalse(metrics['stopped_after_validation'])
 
-    def test_query_recaptures_after_initialization_and_reports_actual_snapshot_age(self):
+    def test_query_streams_once_after_bootstrap_and_reports_actual_snapshot_age(self):
         work = Path(tempfile.mkdtemp(prefix='reader-lifecycle-'))
         database_dir = work / 'LINE' / 'Data' / 'db'
         database_dir.mkdir(mode=0o777, parents=True)
         path = database_dir / 'test.edb'
         path.write_bytes(b'fixture')
         events = []
-        def capture(_):
+        def prefix(source, *, limits):
+            if source == path:
+                events.append('bootstrap')
+            return b'x' * 4096
+        def capture(_, directory, *, limits):
             events.append('capture')
-            return b'x' * 4096, None, {'captureCompletedAt': dt.datetime.now(dt.timezone.utc).isoformat(), 'sequence': len(events)}
+            destination = directory / 'snapshot.edb'
+            destination.write_bytes(b'x' * 4096)
+            return destination, {'captureCompletedAt': dt.datetime.now(dt.timezone.utc).isoformat(), 'sequence': len(events)}
         def acquire(*_):
             events.append('initialize')
             return b'not-a-real-key', {'scanSeconds': 30}
@@ -222,21 +228,25 @@ class ReaderLifecycleTests(unittest.TestCase):
             with mock.patch.dict(reader.os.environ, {'LOCALAPPDATA': str(work)}), \
                  mock.patch.object(reader, 'application_runtime_dir', return_value=work), \
                  mock.patch.object(reader, 'verify_client_build', return_value={'verified': True}), \
-                 mock.patch.object(reader, 'capture_snapshot', side_effect=capture), \
+                 mock.patch.object(reader, 'read_database_prefix', side_effect=prefix), \
+                 mock.patch.object(reader, 'capture_snapshot_to', side_effect=capture), \
                  mock.patch.object(reader, 'acquire_passphrase', side_effect=acquire), \
                  mock.patch.object(reader, 'passphrase_matches', return_value=True), \
                  mock.patch.object(reader, 'Connection', return_value=connection), \
                  mock.patch.object(reader, 'read_scoped', side_effect=scoped):
                 result = reader.run({'chatName': 'Synthetic', 'dateFrom': '2026-09-11', 'dateTo': '2026-09-11'})
-            self.assertEqual(events, ['capture', 'initialize', 'capture', 'query'])
+            self.assertEqual(events, ['bootstrap', 'initialize', 'capture', 'query'])
+            self.assertTrue(result['freshness']['capturedAfterInitialization'])
             self.assertTrue(result['freshness']['recapturedAfterInitialization'])
+            self.assertEqual(result['freshness']['bootstrapKind'], 'stable_database_prefix')
             self.assertFalse(result['freshness']['sourceCurrentAtCompletionVerified'])
             self.assertGreaterEqual(result['freshness']['snapshotAgeMs'], 0)
             self.assertEqual(result['retrievedAt'], result['freshness']['queryCompletedAt'])
             with mock.patch.dict(reader.os.environ, {'LOCALAPPDATA': str(work)}), \
                  mock.patch.object(reader, 'application_runtime_dir', return_value=work), \
                  mock.patch.object(reader, 'verify_client_build', return_value={'verified': True}), \
-                 mock.patch.object(reader, 'capture_snapshot', side_effect=capture), \
+                 mock.patch.object(reader, 'read_database_prefix', side_effect=prefix), \
+                 mock.patch.object(reader, 'capture_snapshot_to', side_effect=capture), \
                  mock.patch.object(reader, 'acquire_passphrase', side_effect=acquire), \
                  mock.patch.object(reader, 'passphrase_matches', return_value=False), \
                  mock.patch.object(reader, 'Connection') as connect:

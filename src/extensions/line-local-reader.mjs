@@ -1,11 +1,26 @@
-import { spawn } from 'node:child_process';
+import { spawn as nodeSpawn } from 'node:child_process';
+import { randomUUID, createHash } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
 import { LineToolError, requireChat, configuredPythonPath } from './line-runtime.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./python/line-reader.py', import.meta.url));
 const MAX_OUTPUT = 4 * 1024 * 1024;
+const DEFAULT_READER_TIMEOUT_MS = 300_000;
+const MIN_ENV_READER_TIMEOUT_MS = 1_000;
+const MAX_READER_TIMEOUT_MS = 1_800_000;
+const MIN_TERMINATION_GRACE_MS = 50;
+const MAX_TERMINATION_GRACE_MS = 5_000;
+const FIXED_SNAPSHOT_FILES = Object.freeze(['snapshot.edb-wal', 'snapshot.edb-shm', 'snapshot.edb-journal', 'snapshot.edb']);
+const SOURCE_LIMITS = Object.freeze({
+  database: Object.freeze({ setting: 'LINE_MCP_MAX_SOURCE_BYTES', defaultMaxBytes: 2_147_483_648, maxConfiguredBytes: 8_589_934_592 }),
+  wal: Object.freeze({ setting: 'LINE_MCP_MAX_WAL_BYTES', defaultMaxBytes: 268_435_456, maxConfiguredBytes: 1_073_741_824 }),
+  snapshot: Object.freeze({ setting: 'LINE_MCP_MAX_SNAPSHOT_BYTES', defaultMaxBytes: 2_415_919_104, maxConfiguredBytes: 9_663_676_416 }),
+});
 const fail = code => new LineToolError(code, 'Local LINE read did not complete. No GUI fallback or send was attempted.');
+const terminationFailure = () => new LineToolError('LOCAL_READER_TERMINATION_FAILED',
+  'The local LINE reader could not be confirmed stopped. Its private scratch directory was retained.', { mayStillBeRunning: true });
 
 export function validateLocalScope(args, { allowIdentityOnly = false, allowGuiIdentityOnly = false } = {}) {
   const allowGuiMode = allowIdentityOnly && allowGuiIdentityOnly;
@@ -61,30 +76,332 @@ function validateCursor(value, scope) {
   return token;
 }
 
-export function runReaderProcess(payload, { pythonPath = configuredPythonPath(), timeoutMs = 120000 } = {}) {
+/**
+ * Start the private reader in a parent-owned, one-request directory.  The
+ * Python reader receives only an opaque request ID and derives the fixed
+ * directory itself; no payload path can influence snapshot placement.
+ */
+export function runReaderProcess(payload, options = {}) {
+  let scope;
+  try {
+    // Internal identity flags are accepted here only because callers have
+    // already passed through one of the private identity wrappers below.
+    scope = validateLocalScope(payload, { allowIdentityOnly: true, allowGuiIdentityOnly: true });
+  } catch (error) {
+    return Promise.reject(error instanceof LineToolError ? error : fail('LINE_INVALID_ARGUMENT'));
+  }
+
+  let timeoutMs;
+  try { timeoutMs = readerTimeout(options.timeoutMs); }
+  catch (error) { return Promise.reject(error); }
+  const pythonPath = options.pythonPath === undefined ? configuredPythonPath() : options.pythonPath;
   if (!configuredPythonPath(pythonPath)) return Promise.reject(fail('LOCAL_READER_UNAVAILABLE'));
+  if (typeof options.spawnProcess !== 'undefined' && typeof options.spawnProcess !== 'function') {
+    return Promise.reject(fail('LOCAL_READER_UNAVAILABLE'));
+  }
+
+  return runOwnedReader(scope, pythonPath, timeoutMs, options.spawnProcess ?? nodeSpawn);
+}
+
+function readerTimeout(override) {
+  if (override !== undefined) {
+    if (!Number.isSafeInteger(override) || override < 1 || override > MAX_READER_TIMEOUT_MS) {
+      throw fail('LOCAL_READER_TIMEOUT_INVALID');
+    }
+    return override;
+  }
+  const configured = process.env.LINE_MCP_READER_TIMEOUT_MS;
+  if (configured === undefined) return DEFAULT_READER_TIMEOUT_MS;
+  if (typeof configured !== 'string' || !/^[1-9][0-9]*$/u.test(configured)) throw fail('LOCAL_READER_TIMEOUT_INVALID');
+  const value = Number(configured);
+  if (!Number.isSafeInteger(value) || String(value) !== configured
+      || value < MIN_ENV_READER_TIMEOUT_MS || value > MAX_READER_TIMEOUT_MS) {
+    throw fail('LOCAL_READER_TIMEOUT_INVALID');
+  }
+  return value;
+}
+
+async function runOwnedReader(scope, pythonPath, timeoutMs, spawnProcess) {
+  let request;
+  try {
+    request = await createReaderRequestDirectory();
+  } catch (error) {
+    throw error instanceof LineToolError ? error : fail('LOCAL_READER_UNAVAILABLE');
+  }
+
+  let child;
+  try {
+    child = spawnProcess(pythonPath, ['-B', SCRIPT], {
+      env: { ...process.env, LINE_MCP_READER_REQUEST_ID: request.id },
+      shell: false,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch {
+    await cleanupAfterReaderFailure(request, fail('LOCAL_READER_UNAVAILABLE'));
+    return undefined; // `cleanupAfterReaderFailure` always throws.
+  }
+
+  if (!child) {
+    await cleanupAfterReaderFailure(request, fail('LOCAL_READER_UNAVAILABLE'));
+    return undefined; // `cleanupAfterReaderFailure` always throws.
+  }
+  if (typeof child.on !== 'function' || typeof child.once !== 'function' || typeof child.kill !== 'function'
+      || !child.stdin || !child.stdout || !child.stderr) {
+    return awaitMalformedReaderChild(child, request, timeoutMs);
+  }
+  return collectReaderOutput(child, scope, request, timeoutMs);
+}
+
+function collectReaderOutput(child, scope, request, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const child = spawn(pythonPath, ['-B', SCRIPT], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     const chunks = [];
-    let bytes = 0, settled = false;
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error) { child.kill(); reject(error); } else resolve(value);
+    let bytes = 0;
+    let terminalError = null;
+    let closed = false;
+    let cleanupStarted = false;
+    let responseSettled = false;
+    let timeoutTimer;
+    let terminationTimer;
+
+    const settleReject = error => {
+      if (responseSettled) return;
+      responseSettled = true;
+      reject(error);
     };
-    const timer = setTimeout(() => finish(fail('LOCAL_READER_TIMEOUT')), timeoutMs);
-    child.on('error', () => finish(fail('LOCAL_READER_UNAVAILABLE')));
-    child.stdin.on('error', () => finish(fail('LOCAL_READER_UNAVAILABLE')));
+    const settleResolve = value => {
+      if (responseSettled) return;
+      responseSettled = true;
+      resolve(value);
+    };
+    const startTerminationGrace = () => {
+      if (terminationTimer || closed) return;
+      terminationTimer = setTimeout(() => {
+        if (!closed) {
+          clearTimeout(timeoutTimer);
+          settleReject(terminationFailure());
+        }
+      }, readerTerminationGrace(timeoutMs));
+    };
+
+    const terminate = error => {
+      if (terminalError || closed) return;
+      terminalError = error;
+      try {
+        child.kill();
+      } catch {
+        // The grace timer reports only that termination could not be confirmed.
+      }
+      startTerminationGrace();
+    };
+
+    const finalize = async code => {
+      if (cleanupStarted) return;
+      cleanupStarted = true;
+      clearTimeout(timeoutTimer);
+      clearTimeout(terminationTimer);
+      try {
+        await cleanupReaderRequestDirectory(request);
+      } catch {
+        settleReject(fail('LOCAL_READER_CLEANUP_FAILED'));
+        return;
+      }
+      if (responseSettled) return;
+      if (terminalError) {
+        settleReject(terminalError);
+      } else {
+        settleResolve({ code, stdout: Buffer.concat(chunks).toString('utf8') });
+      }
+    };
+
+    child.once('error', () => terminate(fail('LOCAL_READER_UNAVAILABLE')));
+    child.stdin.once('error', () => terminate(fail('LOCAL_READER_UNAVAILABLE')));
+    child.stdout.once('error', () => terminate(fail('LOCAL_READER_UNAVAILABLE')));
+    child.stderr.once('error', () => terminate(fail('LOCAL_READER_UNAVAILABLE')));
     child.stdout.on('data', chunk => {
+      if (terminalError || closed) return;
       bytes += chunk.length;
-      if (bytes > MAX_OUTPUT) finish(fail('LOCAL_READER_RESULT_TOO_LARGE'));
+      if (bytes > MAX_OUTPUT) terminate(fail('LOCAL_READER_RESULT_TOO_LARGE'));
       else chunks.push(chunk);
     });
     child.stderr.on('data', () => {}); // Never forward process/key/SQLite exception text.
-    child.on('close', code => finish(null, { code, stdout: Buffer.concat(chunks).toString('utf8') }));
-    child.stdin.end(JSON.stringify(payload));
+    child.once('close', code => {
+      closed = true;
+      void finalize(code);
+    });
+    timeoutTimer = setTimeout(() => terminate(fail('LOCAL_READER_TIMEOUT')), timeoutMs);
+    try {
+      child.stdin.end(JSON.stringify(scope));
+    } catch {
+      terminate(fail('LOCAL_READER_UNAVAILABLE'));
+    }
   });
+}
+
+function readerTerminationGrace(timeoutMs) {
+  return Math.min(MAX_TERMINATION_GRACE_MS, Math.max(MIN_TERMINATION_GRACE_MS, timeoutMs));
+}
+
+function awaitMalformedReaderChild(child, request, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let closed = false;
+    let cleanupStarted = false;
+    let settled = false;
+    const settleReject = error => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const finishAfterClose = async () => {
+      if (cleanupStarted) return;
+      cleanupStarted = true;
+      clearTimeout(terminationTimer);
+      try {
+        await cleanupReaderRequestDirectory(request);
+      } catch {
+        settleReject(fail('LOCAL_READER_CLEANUP_FAILED'));
+        return;
+      }
+      if (!settled) settleReject(fail('LOCAL_READER_UNAVAILABLE'));
+    };
+    const terminationTimer = setTimeout(() => {
+      if (!closed) settleReject(terminationFailure());
+    }, readerTerminationGrace(timeoutMs));
+
+    try {
+      child.once('close', () => {
+        closed = true;
+        void finishAfterClose();
+      });
+      child.kill();
+    } catch {
+      // Do not delete an owned directory while an injected child might be live.
+    }
+  });
+}
+
+async function cleanupAfterReaderFailure(request, error) {
+  try {
+    await cleanupReaderRequestDirectory(request);
+  } catch {
+    throw fail('LOCAL_READER_CLEANUP_FAILED');
+  }
+  throw error;
+}
+
+async function createReaderRequestDirectory() {
+  const localAppData = readerLocalAppDataDirectory();
+  await assertSafeDirectoryComponents(localAppData);
+  const applicationDirectory = await ensureSafeDirectoryChild(localAppData, 'line-desktop-mcp');
+  const readerDirectory = await ensureSafeDirectoryChild(applicationDirectory, 'line-reader');
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const id = randomUUID().replaceAll('-', '');
+    if (!/^[0-9a-f]{32}$/u.test(id)) throw fail('LOCAL_READER_UNAVAILABLE');
+    const directory = path.join(readerDirectory, `line-reader-${id}`);
+    await assertSafeDirectory(readerDirectory);
+    try {
+      await fs.mkdir(directory, { mode: 0o700 });
+    } catch (error) {
+      if (error?.code === 'EEXIST') continue;
+      throw fail('LOCAL_READER_UNAVAILABLE');
+    }
+    await assertSafeDirectory(directory);
+    return { id, directory };
+  }
+  throw fail('LOCAL_READER_UNAVAILABLE');
+}
+
+function readerLocalAppDataDirectory() {
+  const value = process.env.LOCALAPPDATA;
+  if (typeof value !== 'string' || !value || value !== value.trim() || value.includes('\0') || !path.isAbsolute(value)) {
+    throw fail('LOCAL_READER_UNAVAILABLE');
+  }
+  const parsed = path.parse(value);
+  const suffix = value.slice(parsed.root.length).split(/[\\/]+/u).filter(Boolean);
+  if (!parsed.root || suffix.some(part => part === '.' || part === '..')) throw fail('LOCAL_READER_UNAVAILABLE');
+  return path.normalize(value);
+}
+
+function directoryComponents(directory) {
+  const parsed = path.parse(directory);
+  if (!parsed.root || !path.isAbsolute(directory)) throw fail('LOCAL_READER_UNAVAILABLE');
+  const components = [parsed.root];
+  let current = parsed.root;
+  for (const part of directory.slice(parsed.root.length).split(/[\\/]+/u).filter(Boolean)) {
+    if (part === '.' || part === '..') throw fail('LOCAL_READER_UNAVAILABLE');
+    current = path.join(current, part);
+    components.push(current);
+  }
+  return components;
+}
+
+async function assertSafeDirectoryComponents(directory) {
+  for (const component of directoryComponents(directory)) await assertSafeDirectory(component);
+}
+
+async function ensureSafeDirectoryChild(parent, name) {
+  await assertSafeDirectory(parent);
+  const directory = path.join(parent, name);
+  try {
+    await fs.mkdir(directory, { mode: 0o700 });
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw fail('LOCAL_READER_UNAVAILABLE');
+  }
+  await assertSafeDirectory(directory);
+  return directory;
+}
+
+async function assertSafeDirectory(directory) {
+  let info;
+  try { info = await fs.lstat(directory); }
+  catch { throw fail('LOCAL_READER_UNAVAILABLE'); }
+  if (!info.isDirectory() || info.isSymbolicLink()) throw fail('LOCAL_READER_UNAVAILABLE');
+}
+
+async function cleanupReaderRequestDirectory(request) {
+  if (!isOwnedReaderDirectory(request)) throw fail('LOCAL_READER_CLEANUP_FAILED');
+  let directoryInfo;
+  try { directoryInfo = await fs.lstat(request.directory); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw fail('LOCAL_READER_CLEANUP_FAILED');
+  }
+  if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) throw fail('LOCAL_READER_CLEANUP_FAILED');
+
+  try {
+    await assertSafeDirectoryComponents(request.directory);
+    const names = await fs.readdir(request.directory);
+    if (names.some(name => !FIXED_SNAPSHOT_FILES.includes(name))) throw new Error('unexpected reader file');
+    for (const name of FIXED_SNAPSHOT_FILES) await assertSafeSnapshotFile(path.join(request.directory, name));
+    for (const name of FIXED_SNAPSHOT_FILES) {
+      const target = path.join(request.directory, name);
+      await assertSafeSnapshotFile(target);
+      try { await fs.unlink(target); }
+      catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    }
+    await fs.rmdir(request.directory);
+  } catch {
+    throw fail('LOCAL_READER_CLEANUP_FAILED');
+  }
+}
+
+function isOwnedReaderDirectory(request) {
+  if (!request || typeof request.directory !== 'string' || !/^[0-9a-f]{32}$/u.test(request.id ?? '')) return false;
+  const name = `line-reader-${request.id}`;
+  const parent = path.dirname(request.directory);
+  return path.basename(request.directory) === name
+    && path.basename(parent) === 'line-reader'
+    && path.basename(path.dirname(parent)) === 'line-desktop-mcp';
+}
+
+async function assertSafeSnapshotFile(target) {
+  let info;
+  try { info = await fs.lstat(target); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error('unsafe snapshot file');
 }
 
 export async function readLocalLineChatIdentity(args, options = {}) {
@@ -124,9 +441,14 @@ export async function readLocalLineMessages(args, { runProcess = runReaderProces
     'ENGINE_CIPHER_UNAVAILABLE', 'ENGINE_DLL_UNCONFIGURED', 'ENGINE_DLL_INVALID_PATH', 'ENGINE_DLL_UNAVAILABLE',
     'RUNTIME_DIRECTORY_UNAVAILABLE',
     'SOURCE_IO_ERROR', 'SOURCE_NOT_READONLY', 'INVALID_SOURCE_TIME', 'INVALID_SOURCE_ID',
-    'SOURCE_ACCESS_DENIED', 'SOURCE_NOT_FOUND', 'SOURCE_REPARSE', 'SOURCE_NOT_FILE', 'SOURCE_TOO_LARGE',
+    'SOURCE_ACCESS_DENIED', 'SOURCE_NOT_FOUND', 'SOURCE_REPARSE', 'SOURCE_NOT_FILE', 'SOURCE_TOO_LARGE', 'INVALID_PATH',
+    'SOURCE_LIMIT_INVALID', 'SNAPSHOT_DESTINATION_EXISTS', 'SNAPSHOT_DISK_FULL', 'SNAPSHOT_IO_ERROR', 'SNAPSHOT_CLEANUP_FAILED',
     'DATABASE_HEADER_INVALID', 'DATABASE_SIZE_INVALID', 'WAL_HEADER_INVALID', 'WAL_PAGE_SIZE_MISMATCH', 'WAL_NO_VALID_COMMIT']);
-  if (!result || typeof result !== 'object' || output.code !== 0 || result.ok !== true) throw fail(allowedErrors.has(result?.code) ? result.code : 'LOCAL_READER_FAILED');
+  if (!result || typeof result !== 'object' || output.code !== 0 || result.ok !== true) {
+    const sourceLimitError = result?.code === 'SOURCE_TOO_LARGE' ? safeSourceLimitError(result) : null;
+    if (result?.code === 'SOURCE_TOO_LARGE') throw sourceLimitError ?? fail('LOCAL_READER_FAILED');
+    throw fail(allowedErrors.has(result?.code) ? result.code : 'LOCAL_READER_FAILED');
+  }
   const expectedKind = scope.guiIdentityOnly ? 'local_gui_chat_identity'
     : scope.identityOnly ? 'local_chat_identity' : 'local_database';
   const guiShapeMatches = !scope.guiIdentityOnly || (
@@ -169,4 +491,32 @@ export async function readLocalLineMessages(args, { runProcess = runReaderProces
     }
   }
   return result;
+}
+
+function safeSourceLimitError(result) {
+  const details = result?.details;
+  if (!details || typeof details !== 'object' || Array.isArray(details)
+      || Object.keys(details).sort().join(',') !== 'maxBytes,setting,sourceBytes,sourceKind') return null;
+  const limit = SOURCE_LIMITS[details.sourceKind];
+  if (!limit || details.setting !== limit.setting
+      || !Number.isSafeInteger(details.sourceBytes) || details.sourceBytes < 0
+      || !Number.isSafeInteger(details.maxBytes) || details.maxBytes < 0
+      || details.sourceBytes <= details.maxBytes
+      || details.maxBytes !== configuredSourceLimit(limit)) return null;
+  return new LineToolError('SOURCE_TOO_LARGE',
+    'A local LINE source exceeded its configured safe size limit. No GUI fallback or send was attempted.', {
+      sourceKind: details.sourceKind,
+      sourceBytes: details.sourceBytes,
+      maxBytes: details.maxBytes,
+      setting: details.setting,
+    });
+}
+
+function configuredSourceLimit(limit) {
+  const raw = process.env[limit.setting];
+  if (raw === undefined) return limit.defaultMaxBytes;
+  if (typeof raw !== 'string' || !/^[0-9]+$/u.test(raw)) return null;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > limit.maxConfiguredBytes) return null;
+  return value;
 }

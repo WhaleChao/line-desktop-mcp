@@ -12,7 +12,7 @@ import { reconcileLineSources } from './line-source-reconciliation.mjs';
 import { requireReplySource } from './line-quote-binding.mjs';
 import { LineToolError, requireChat, requireText, runtimeRequire, toolResult, toolError } from './line-runtime.mjs';
 
-export const EXTENSION_VERSION = '3.0.0';
+export const EXTENSION_VERSION = '3.0.1';
 const MAX_MEDIA_PREVIEW_BYTES = 256 * 1024;
 // Match the reader's validated original-image contract. The 2048-pixel
 // normalization applies only to derived previews, not small original PNG/JPEG.

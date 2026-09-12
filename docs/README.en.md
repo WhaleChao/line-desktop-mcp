@@ -8,7 +8,9 @@ Choose a chat and date range. Let your AI assistant organize the conversation to
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[Download v3.0.0](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.0) · [Release notes](releases/v3.0.0.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+[Download v3.0.1](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.1) · [Release notes](releases/v3.0.1.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+
+**v3.0.1 large-database fix:** Streamed snapshots replace the 256 MiB whole-database blocker. The default DB limit is 2 GiB; WAL and source-stability checks remain. No chat-history deletion is needed. [Release notes](releases/v3.0.1.en.md) · [Upgrade](MIGRATING.md#upgrading-to-v301)
 
 **LINE Agent MCP**, the Windows community edition maintained by [bensonmaxai](https://github.com/bensonmaxai/line-desktop-mcp), based on [Geoffrey Wang's original project](https://github.com/dtwang/line-desktop-mcp). It connects a local MCP client to a signed-in LINE Desktop. Codex is our everyday client; other local MCP clients can connect too. This project is not affiliated with LINE.
 
@@ -36,7 +38,7 @@ Ordinary text drafts are reviewed in Codex. The agent performs visual UI checks;
 ## Install and migrate
 
 ```powershell
-git clone --branch v3.0.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.0.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

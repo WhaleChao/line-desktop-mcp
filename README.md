@@ -8,7 +8,9 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[下載 v3.0.0](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.0) · [五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[下載 v3.0.1](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.1) · [五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+
+**v3.0.1 大型資料庫修復：** 修正資料庫超過 256 MiB 就無法讀取的問題，改用串流快照，預設支援 2 GiB DB，並保留 WAL 與來源穩定性檢查。不需要刪除聊天紀錄。[更新說明](docs/releases/v3.0.1.zh-TW.md) · [升級](docs/MIGRATING.md#upgrading-to-v301)
 
 這是 **LINE Agent MCP**，由 [bensonmaxai](https://github.com/bensonmaxai/line-desktop-mcp) 維護的 Windows 社群版，建立在 [dtwang/line-desktop-mcp](https://github.com/dtwang/line-desktop-mcp) 之上。透過本機 MCP 連接已登入的 LINE Desktop，日常以 Codex 使用，也能搭配其他支援本機 MCP 的客戶端。本專案與 LINE 官方無關。
 
@@ -39,7 +41,7 @@ Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後提供 **29 個工具**。未啟用時
 ## 安裝與升級
 
 ```powershell
-git clone --branch v3.0.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.0.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

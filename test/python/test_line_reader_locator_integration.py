@@ -55,20 +55,39 @@ class ReaderLocatorIntegrationTests(unittest.TestCase):
 
     def _run_patches(self, *, read_result=None, matches=True, read_error=None):
         events = []
-        snapshots = [
-            (b'x' * 4096, None, self._snapshot(1)),
-            (b'x' * 4096, None, self._snapshot(2)),
-        ]
         connection = mock.MagicMock()
         connection.__enter__.return_value.version = {'fixture': True}
 
-        def capture(_):
+        def prefix(path, *, limits):
+            if path == self.database:
+                events.append('bootstrap')
+                return b'b' * 4096
+            self.assertEqual(path.name, 'snapshot.edb')
+            return path.read_bytes()
+
+        def capture(_, directory, *, limits):
             events.append('capture')
-            return snapshots.pop(0)
+            path = directory / 'snapshot.edb'
+            path.write_bytes(b'f' * 4096)
+            return path, self._snapshot(2)
 
         def acquire(*_):
             events.append('acquire')
             return b'not-a-real-key', self.metrics
+
+        def revalidate(prefix, key):
+            self.assertEqual(events[-1], 'capture')
+            self.assertEqual(prefix, b'f' * 4096)
+            self.assertEqual(key, b'not-a-real-key')
+            events.append('revalidate')
+            return matches
+
+        def open_snapshot(path, key):
+            self.assertEqual(events[-1], 'revalidate')
+            self.assertEqual(path.name, 'snapshot.edb')
+            self.assertEqual(path.read_bytes(), b'f' * 4096)
+            events.append('open')
+            return connection
 
         def scoped(*_):
             events.append('read')
@@ -77,22 +96,25 @@ class ReaderLocatorIntegrationTests(unittest.TestCase):
             return read_result if read_result is not None else {'messages': [], 'count': 0}
 
         commit = mock.Mock(side_effect=lambda value: events.append('commit') or True)
+        open_connection = mock.Mock(side_effect=open_snapshot)
         patches = (
             mock.patch.dict(reader.os.environ, {'LOCALAPPDATA': str(self.work)}),
-            mock.patch.object(reader, 'capture_snapshot', side_effect=capture),
+            mock.patch.multiple(reader,
+                read_database_prefix=mock.Mock(side_effect=prefix),
+                capture_snapshot_to=mock.Mock(side_effect=capture)),
             mock.patch.object(reader, 'acquire_passphrase', side_effect=acquire),
-            mock.patch.object(reader, 'passphrase_matches', return_value=matches),
-            mock.patch.object(reader, 'Connection', return_value=connection),
+            mock.patch.object(reader, 'passphrase_matches', side_effect=revalidate),
+            mock.patch.object(reader, 'Connection', open_connection),
             mock.patch.object(reader, 'read_scoped', side_effect=scoped),
             mock.patch.object(reader.session_locator, 'commit_after_success', commit),
         )
-        return events, commit, connection, patches
+        return events, commit, open_connection, patches
 
     def test_invalid_scope_rejects_before_snapshot_or_key_acquisition(self):
         invalid = reader.ReaderError('INVALID_SCOPE')
         with mock.patch.object(reader, 'validate_scope', side_effect=invalid), \
              mock.patch.object(reader, 'verify_client_build') as build, \
-             mock.patch.object(reader, 'capture_snapshot') as capture, \
+             mock.patch.object(reader, 'capture_snapshot_to') as capture, \
              mock.patch.object(reader, 'acquire_passphrase') as acquire, \
              mock.patch.object(reader.session_locator, 'commit_after_success') as commit:
             with self.assertRaises(reader.ReaderError) as error:
@@ -106,7 +128,7 @@ class ReaderLocatorIntegrationTests(unittest.TestCase):
     def test_unknown_client_build_refuses_before_database_or_process_reads(self):
         with mock.patch.object(reader, 'verify_client_build', side_effect=reader.ClientBuildError()), \
              mock.patch.object(reader.Path, 'glob') as glob, \
-             mock.patch.object(reader, 'capture_snapshot') as capture, \
+             mock.patch.object(reader, 'capture_snapshot_to') as capture, \
              mock.patch.object(reader, 'acquire_passphrase') as acquire:
             with self.assertRaises(reader.ReaderError) as error:
                 reader.run({'chatName': 'Synthetic', 'dateFrom': '2026-09-11', 'dateTo': '2026-09-11'})
@@ -115,13 +137,13 @@ class ReaderLocatorIntegrationTests(unittest.TestCase):
         capture.assert_not_called()
         acquire.assert_not_called()
 
-    def test_second_snapshot_key_mismatch_does_not_commit_or_open_sqlite(self):
+    def test_fresh_snapshot_key_mismatch_does_not_commit_or_open_sqlite(self):
         events, commit, connection, patches = self._run_patches(matches=False)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
             with self.assertRaises(reader.ReaderError) as error:
                 reader.run({'chatName': 'Synthetic', 'dateFrom': '2026-09-11', 'dateTo': '2026-09-11'})
         self.assertEqual(error.exception.code, 'SESSION_KEY_CHANGED')
-        self.assertEqual(events, ['capture', 'acquire', 'capture'])
+        self.assertEqual(events, ['bootstrap', 'acquire', 'capture', 'revalidate'])
         connection.assert_not_called()
         commit.assert_not_called()
 
@@ -131,7 +153,7 @@ class ReaderLocatorIntegrationTests(unittest.TestCase):
             with self.assertRaises(reader.ReaderError) as error:
                 reader.run({'chatName': 'Synthetic', 'dateFrom': '2026-09-11', 'dateTo': '2026-09-11'})
         self.assertEqual(error.exception.code, 'SCOPED_READ_FAILED')
-        self.assertEqual(events, ['capture', 'acquire', 'capture', 'read'])
+        self.assertEqual(events, ['bootstrap', 'acquire', 'capture', 'revalidate', 'open', 'read'])
         commit.assert_not_called()
 
     def test_oversized_result_does_not_commit(self):
@@ -142,7 +164,7 @@ class ReaderLocatorIntegrationTests(unittest.TestCase):
             with self.assertRaises(reader.ReaderError) as error:
                 reader.run({'chatName': 'Synthetic', 'dateFrom': '2026-09-11', 'dateTo': '2026-09-11'})
         self.assertEqual(error.exception.code, 'RESULT_TOO_LARGE')
-        self.assertEqual(events, ['capture', 'acquire', 'capture', 'read'])
+        self.assertEqual(events, ['bootstrap', 'acquire', 'capture', 'revalidate', 'open', 'read'])
         commit.assert_not_called()
 
     def test_snapshot_cleanup_failure_does_not_commit(self):
@@ -157,12 +179,13 @@ class ReaderLocatorIntegrationTests(unittest.TestCase):
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], \
              mock.patch.object(reader.Path, 'rmdir', autospec=True,
                                side_effect=reject_reader_snapshot_directory):
-            with self.assertRaises(OSError):
+            with self.assertRaises(reader.ReaderError) as error:
                 reader.run({'chatName': 'Synthetic', 'dateFrom': '2026-09-11', 'dateTo': '2026-09-11'})
-        self.assertEqual(events, ['capture', 'acquire', 'capture', 'read'])
+        self.assertEqual(error.exception.code, 'SNAPSHOT_CLEANUP_FAILED')
+        self.assertEqual(events, ['bootstrap', 'acquire', 'capture', 'revalidate', 'open', 'read'])
         commit.assert_not_called()
 
-    def test_success_recaptures_then_commits_once_without_private_locator_context(self):
+    def test_success_captures_once_after_bootstrap_then_commits_without_private_context(self):
         captured_scope = {}
         events, commit, _, patches = self._run_patches()
 
@@ -174,13 +197,45 @@ class ReaderLocatorIntegrationTests(unittest.TestCase):
         patches = (*patches[:5], mock.patch.object(reader, 'read_scoped', side_effect=scoped), patches[6])
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
             result = reader.run({'chatName': 'Synthetic', 'dateFrom': '2026-09-11', 'dateTo': '2026-09-11'})
-        self.assertEqual(events, ['capture', 'acquire', 'capture', 'read', 'commit'])
+        self.assertEqual(events, ['bootstrap', 'acquire', 'capture', 'revalidate', 'open', 'read', 'commit'])
         commit.assert_called_once_with(self.cache_commit)
         self.assertEqual(captured_scope['sequence'], 2)
         self.assertEqual(captured_scope['keyAcquisition'], 'locator')
         for private_field in ('cache_commit', 'windowAddressHex', 'processCreatedFiletimeHex', 'dbPathSha256'):
             self.assertNotIn(private_field, captured_scope)
             self.assertNotIn(private_field, result)
+
+    def test_bootstrap_failure_cleans_request_without_key_scan(self):
+        with mock.patch.dict(reader.os.environ, {'LOCALAPPDATA': str(self.work)}), \
+             mock.patch.object(reader, 'read_database_prefix',
+                               side_effect=reader.SnapshotError('SOURCE_BUSY')), \
+             mock.patch.object(reader, 'acquire_passphrase') as acquire, \
+             mock.patch.object(reader, 'capture_snapshot_to') as capture:
+            with self.assertRaises(reader.SnapshotError) as error:
+                reader.run({'chatName': 'Synthetic', 'dateFrom': '2026-09-11', 'dateTo': '2026-09-11'})
+        self.assertEqual(error.exception.code, 'SOURCE_BUSY')
+        acquire.assert_not_called()
+        capture.assert_not_called()
+        self.assertEqual(list(self.work.glob('line-reader-*')), [])
+
+    def test_partial_capture_failure_removes_only_its_scratch_files(self):
+        def capture(_, directory, *, limits):
+            (directory / 'snapshot.edb').write_bytes(b'partial encrypted fixture')
+            raise reader.SnapshotError('SNAPSHOT_DISK_FULL')
+
+        with mock.patch.dict(reader.os.environ, {'LOCALAPPDATA': str(self.work)}), \
+             mock.patch.object(reader, 'read_database_prefix', return_value=b'x' * 4096), \
+             mock.patch.object(reader, 'acquire_passphrase', return_value=(b'fixture-key', self.metrics)), \
+             mock.patch.object(reader, 'capture_snapshot_to', side_effect=capture), \
+             mock.patch.object(reader, 'Connection') as connect, \
+             mock.patch.object(reader.session_locator, 'commit_after_success') as commit:
+            with self.assertRaises(reader.SnapshotError) as error:
+                reader.run({'chatName': 'Synthetic', 'dateFrom': '2026-09-11', 'dateTo': '2026-09-11'})
+        self.assertEqual(error.exception.code, 'SNAPSHOT_DISK_FULL')
+        connect.assert_not_called()
+        commit.assert_not_called()
+        self.assertEqual(list(self.work.glob('line-reader-*')), [])
+        self.assertEqual(self.database.read_bytes(), b'encrypted fixture')
 
 
 if __name__ == '__main__':

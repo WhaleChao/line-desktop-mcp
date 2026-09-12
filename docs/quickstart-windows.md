@@ -2,7 +2,7 @@
 
 [Project home](../README.md) · [Features](features.md) · [Upgrade and rollback](MIGRATING.md)
 
-This guide installs **LINE Agent MCP v3.0.0** from the maintained
+This guide installs **LINE Agent MCP v3.0.1** from the maintained
 [bensonmaxai/line-desktop-mcp](https://github.com/bensonmaxai/line-desktop-mcp)
 repository. The display name is LINE Agent MCP; the package and MCP server name
 remain `line-desktop-mcp`.
@@ -12,7 +12,7 @@ path does not suit your machine. Keep the checkout, virtual environment,
 downloaded archives, and extracted binaries outside OneDrive.
 
 This release is distributed from its GitHub tag and the attached
-`line-desktop-mcp-3.0.0.tgz` with `SHA256SUMS.txt`. It is **not** published to the npm registry and
+`line-desktop-mcp-3.0.1.tgz` with `SHA256SUMS.txt`. It is **not** published to the npm registry and
 does not provide an MCPB bundle. Do not install `line-desktop-mcp@latest` from
 npm: it is not this release.
 
@@ -20,7 +20,7 @@ npm: it is not this release.
 
 | What you want to use | Requirement |
 | --- | --- |
-| Base MCP server | Node.js 24 LTS or newer. The package requires Node >= 24.0.0; v3.0.0 was tested with Node 24.19.0 and pins @modelcontextprotocol/sdk 1.29.0. |
+| Base MCP server | Node.js 24 LTS or newer. The package requires Node >= 24.0.0; v3.0.1 was tested with Node 24.19.0 and pins @modelcontextprotocol/sdk 1.29.0. |
 | Windows extension catalogue | Set `LINE_MCP_EXTENSIONS=1`. This exposes 29 Windows tools. Without that exact value, five default descriptors remain; their names, order, and input schemas are retained, while their availability descriptions are updated for v3. macOS also lists those five descriptors. |
 | Local text and media context | Windows x64, a signed-in LINE Desktop process whose build is in the shipped allowlist, a 64-bit Python, both required Python packages, and the pinned SQLite3MC DLL described below. LINE Desktop 26.4.2.3957 was the tested build. |
 | Named-chat GUI tools | Every Windows named-chat GUI path, including the five defaults, requires a separately installed CUA Driver plus the local-reader Python/DLL prerequisites. AutoHotkey v2 is required only by legacy GUI helper paths; local Windows OCR is required only when the selected path uses it. |
@@ -41,13 +41,13 @@ the [upgrade guide](MIGRATING.md) uses a sibling checkout so rollback stays
 available.
 
 ~~~powershell
-git clone --branch v3.0.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git C:\Tools\line-desktop-mcp-v3
-Set-Location C:\Tools\line-desktop-mcp-v3
+git clone --branch v3.0.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git C:\Tools\line-desktop-mcp-v3.0.1
+Set-Location C:\Tools\line-desktop-mcp-v3.0.1
 git describe --exact-match --tags
 npm ci --ignore-scripts
 ~~~
 
-`git describe` should print `v3.0.0`. The lockfile is included, so use
+`git describe` should print `v3.0.1`. The lockfile is included, so use
 `npm ci --ignore-scripts`, not an unpinned registry install. `--ignore-scripts`
 keeps package lifecycle scripts from running during installation.
 
@@ -74,10 +74,10 @@ absolute Python path below.
 
 ~~~powershell
 $basePython = 'C:\Tools\Python312\python.exe'
-$venv = 'C:\Tools\line-desktop-mcp-v3\.venv'
+$venv = 'C:\Tools\line-desktop-mcp-v3.0.1\.venv'
 & $basePython -m venv $venv
 $readerPython = Join-Path $venv 'Scripts\python.exe'
-& $readerPython -m pip install -r C:\Tools\line-desktop-mcp-v3\src\extensions\python\requirements.txt
+& $readerPython -m pip install -r C:\Tools\line-desktop-mcp-v3.0.1\src\extensions\python\requirements.txt
 & $readerPython -c "import platform, cryptography, PIL; print(platform.architecture()[0], cryptography.__version__, PIL.__version__)"
 ~~~
 
@@ -118,7 +118,7 @@ for `LINE_MCP_SQLITE3MC_DLL`; it must be an absolute `.dll` path.
 
 ## 3. Named-chat GUI prerequisites
 
-Pure local database reading works without the CUA Driver. In v3.0.0, however,
+Pure local database reading works without the CUA Driver. In v3.0.1, however,
 every Windows GUI operation scoped to a named chat—including each of the five
 default descriptors—requires `LINE_MCP_CUA_DRIVER`, `LINE_MCP_PYTHON`, and the
 pinned `LINE_MCP_SQLITE3MC_DLL`. This project does not install those components,
@@ -212,11 +212,11 @@ the complete Windows extension setup:
     "line-desktop-mcp": {
       "command": "C:/Tools/node/node.exe",
       "args": [
-        "C:/Tools/line-desktop-mcp-v3/src/server.js"
+        "C:/Tools/line-desktop-mcp-v3.0.1/src/server.js"
       ],
       "env": {
         "LINE_MCP_EXTENSIONS": "1",
-        "LINE_MCP_PYTHON": "C:/Tools/line-desktop-mcp-v3/.venv/Scripts/python.exe",
+        "LINE_MCP_PYTHON": "C:/Tools/line-desktop-mcp-v3.0.1/.venv/Scripts/python.exe",
         "LINE_MCP_SQLITE3MC_DLL": "C:/Tools/line-desktop-mcp-runtime/sqlite3mc-2.5.1/dll/sqlite3mc_x64.dll",
         "LINE_MCP_CUA_DRIVER": "C:/Tools/line-desktop-mcp-runtime/cua-driver-rs-0.23.2/cua-driver.exe",
         "LINE_MCP_AUTOHOTKEY": "C:/Program Files/AutoHotkey/v2/AutoHotkey64.exe"
@@ -235,7 +235,7 @@ For a new Codex registration, the same values can be supplied with quoted
 PowerShell arguments:
 
 ~~~powershell
-codex mcp add line-desktop-mcp --env "LINE_MCP_EXTENSIONS=1" --env "LINE_MCP_PYTHON=C:/Tools/line-desktop-mcp-v3/.venv/Scripts/python.exe" --env "LINE_MCP_SQLITE3MC_DLL=C:/Tools/line-desktop-mcp-runtime/sqlite3mc-2.5.1/dll/sqlite3mc_x64.dll" --env "LINE_MCP_CUA_DRIVER=C:/Tools/line-desktop-mcp-runtime/cua-driver-rs-0.23.2/cua-driver.exe" --env "LINE_MCP_AUTOHOTKEY=C:/Program Files/AutoHotkey/v2/AutoHotkey64.exe" -- "C:\Tools\node\node.exe" "C:\Tools\line-desktop-mcp-v3\src\server.js"
+codex mcp add line-desktop-mcp --env "LINE_MCP_EXTENSIONS=1" --env "LINE_MCP_PYTHON=C:/Tools/line-desktop-mcp-v3.0.1/.venv/Scripts/python.exe" --env "LINE_MCP_SQLITE3MC_DLL=C:/Tools/line-desktop-mcp-runtime/sqlite3mc-2.5.1/dll/sqlite3mc_x64.dll" --env "LINE_MCP_CUA_DRIVER=C:/Tools/line-desktop-mcp-runtime/cua-driver-rs-0.23.2/cua-driver.exe" --env "LINE_MCP_AUTOHOTKEY=C:/Program Files/AutoHotkey/v2/AutoHotkey64.exe" -- "C:\Tools\node\node.exe" "C:\Tools\line-desktop-mcp-v3.0.1\src\server.js"
 ~~~
 
 If you only want the five default descriptors, omit `LINE_MCP_EXTENSIONS`
@@ -272,8 +272,8 @@ replace the dependency checks above.
 For a synthetic local verification after setup:
 
 ~~~powershell
-Set-Location C:\Tools\line-desktop-mcp-v3
-$env:LINE_MCP_PYTHON = 'C:\Tools\line-desktop-mcp-v3\.venv\Scripts\python.exe'
+Set-Location C:\Tools\line-desktop-mcp-v3.0.1
+$env:LINE_MCP_PYTHON = 'C:\Tools\line-desktop-mcp-v3.0.1\.venv\Scripts\python.exe'
 $env:LINE_MCP_SQLITE3MC_DLL = 'C:\Tools\line-desktop-mcp-runtime\sqlite3mc-2.5.1\dll\sqlite3mc_x64.dll'
 npm test
 npm run test:python
@@ -281,11 +281,78 @@ npm run test:python
 
 The included runners use sanitized synthetic fixtures and do not read real
 chats or send LINE messages. Python tests require the configured reader
-environment. Pre-release security verification recorded 221/221 Node checks, 101 passing
+environment. v3.0.1 verification recorded 234 passing Node tests and 124 passing
+Python tests with one existing file-symlink privilege skip (125 total), including
+all native SQLite3MC checks. Historical v3.0.0 security verification recorded
+221/221 Node checks, 101 passing
 Python checks plus one symlink-related skip (102 total), nine native SQLite
 checks, and an AutoHotkey parser pass. The new v3 GUI identity flow was not
 live end-to-end tested against LINE; do not treat these results as live GUI
 evidence.
+
+## Large local databases
+
+v3.0.1 removes the fixed 256 MiB source-file cap from the
+local reader. The original v3.0.0 release does not support the settings below;
+use v3.0.1 or later. Encrypted database and WAL bytes are copied
+in bounded chunks to the local request directory; the reader does not load a
+whole database into a Python byte buffer. It still scans the complete files
+to verify the observed snapshot, so disk speed, source activity, and available
+disk space affect completion time.
+
+| MCP client environment setting | Default | Maximum allowed |
+| --- | ---: | ---: |
+| `LINE_MCP_MAX_SOURCE_BYTES` (database) | 2147483648 (2 GiB) | 8589934592 (8 GiB) |
+| `LINE_MCP_MAX_WAL_BYTES` | 268435456 (256 MiB) | 1073741824 (1 GiB) |
+| `LINE_MCP_MAX_SNAPSHOT_BYTES` (database + source WAL) | 2415919104 (2304 MiB) | 9663676416 (9 GiB) |
+| `LINE_MCP_READER_TIMEOUT_MS` | 300000 (5 minutes) | 1800000 (30 minutes) |
+
+Byte settings must be positive decimal integers. The timeout must be an
+integer from 1000 to 1800000 milliseconds. Invalid settings fail explicitly
+with `SOURCE_LIMIT_INVALID` or `LOCAL_READER_TIMEOUT_INVALID`; an invalid
+value never removes the bound. Set overrides in the MCP client's environment
+and reconnect the server, not in tool arguments or an automatically loaded
+`.env` file. When raising the database limit, also allow sufficient combined
+snapshot capacity. A larger timeout here does not override the AI client's
+own request deadline.
+
+`SOURCE_TOO_LARGE` identifies whether the database, WAL, or combined size
+exceeded its limit, along with byte counts and the relevant setting name.
+Reducing `dateFrom`, `dateTo`, or `messageLimit` only narrows the SQL result;
+it does not shrink the encrypted source files. Clearing LINE's media cache
+does not change this source-file limit. Deleting chat history is not required
+to use the fixed reader.
+
+Keep enough free space for an encrypted DB/WAL copy and SQLite's small
+sidecars under the local application runtime directory. `SNAPSHOT_DISK_FULL`
+reports exhausted scratch storage. `SOURCE_BUSY` means the source pair did
+not remain stable within three attempts; request a new read when the
+source is quieter. The reader never forces a checkpoint, VACUUM, or write on
+LINE's source database. It validates WAL checksums and the last committed
+boundary before querying its private copy.
+
+The child cleans normal request files; its Node parent also waits for child
+exit and removes only that request's fixed snapshot files after errors or a
+timeout. Cleanup failures are reported, never disguised as a successful read.
+If `LOCAL_READER_TERMINATION_FAILED` reports `mayStillBeRunning: true`, child
+exit could not be confirmed within a bounded grace period. Its scratch files
+are retained until the child actually exits, so cleanup never races a live
+writer.
+Abrupt termination of the entire MCP server or a system crash can still
+leave encrypted scratch files; there is no broad automatic deletion sweep.
+
+Source-checkout maintainers can run the opt-in large encrypted fixture check
+separately for each size (requires the configured Python and native DLL):
+
+~~~powershell
+& $env:LINE_MCP_PYTHON -B scripts/benchmark-large-reader.py --size-mib 800
+& $env:LINE_MCP_PYTHON -B scripts/benchmark-large-reader.py --size-mib 1024
+~~~
+
+It creates and removes its own encrypted fixtures, verifies the newest
+committed message through the scoped reader, records time and peak memory,
+and checks that source hashes and cleanup behavior are correct. It does not
+read a real LINE account or scan a LINE process for keys.
 
 ## First context request
 

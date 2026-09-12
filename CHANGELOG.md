@@ -1,5 +1,39 @@
 # Changelog
 
+## 3.0.1 — 2026-09-12 (Asia/Taipei)
+
+**Large local database repair ([#1](https://github.com/bensonmaxai/line-desktop-mcp/issues/1)).**
+GitHub tag and `.tgz` release; no npm-registry or MCPB publication. The v3.0.0
+security requirements remain in effect.
+
+- Fix #1: local history and identity reads stream encrypted DB/WAL snapshots
+  instead of rejecting every database above 256 MiB or retaining whole-file
+  buffers. Key discovery uses a bounded 4 KiB prefix, followed by one fresh,
+  verified snapshot and key revalidation before the scoped SQLite query.
+- Default source DB capacity is 2 GiB, with independent, bounded environment
+  settings for DB, WAL, and combined snapshot bytes. Oversize errors identify
+  the exceeded limit without exposing paths or chat content. See
+  [large local databases](docs/quickstart-windows.md#large-local-databases).
+- Reader subprocesses use an owned request directory that the parent cleans
+  after exit, including forced timeout termination. The default reader timeout
+  is five minutes and can be explicitly configured within a bounded range.
+- Freshness metadata adds `capturedAfterInitialization: true` and
+  `bootstrapKind: stable_database_prefix`. The legacy
+  `recapturedAfterInitialization: true` flag remains a compatibility alias for
+  the post-key freshness guarantee, not a claim of two full snapshots.
+  Timing reports `bootstrapPrefixMs` instead of `initialSnapshotMs`, adds
+  `queryMs`, and retains `snapshotFileAndQueryMs` as the aggregate fresh-copy,
+  validation, and query time (which includes `freshSnapshotAndValidationMs`).
+
+Validation: 234 Node tests passed; 124 Python tests passed, with one existing
+Windows file-symlink privilege skip (125 total). Synthetic encrypted databases
+of 853,438,464 and 1,087,713,280 bytes, each with a committed WAL update,
+returned the newest scoped message; source hashes were unchanged and request
+files were cleaned. Peak process working set was approximately 39 MiB.
+Build/key discovery was simulated; actual snapshot, cipher validation and SQL
+ran. No real LINE chat, send or reporter-machine verification is claimed.
+See the [five-language release notes](docs/releases/README.md).
+
 ## 3.0.0 — 2026-09-12 (Asia/Taipei)
 
 **Fail-closed named-chat GUI verification.** This GitHub release is published

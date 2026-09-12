@@ -1,23 +1,29 @@
-# Upgrade to v3.0.0
+# Upgrade to v3.0.1
 
 [Project home](../README.md) · [Windows installation](quickstart-windows.md) · [Features](features.md)
 
-LINE Agent MCP v3.0.0 continues the same
+LINE Agent MCP v3.0.1 continues the same
 [bensonmaxai/line-desktop-mcp](https://github.com/bensonmaxai/line-desktop-mcp)
 repository, package name, and MCP server name: **line-desktop-mcp**. It is
-published from the existing GitHub repository under tag v3.0.0, not to the npm
+published from the existing GitHub repository under tag v3.0.1, not to the npm
 registry and not as an MCPB bundle. LINE account and chat data do not migrate.
 The reader still uses bounded, read-only local copies; it is not an account
 backup or a migration tool.
 
+## Upgrading to v3.0.1
+
+v3.0.1 fixes the 256 MiB whole-database blocker reported in [issue #1](https://github.com/bensonmaxai/line-desktop-mcp/issues/1). It streams encrypted DB/WAL snapshots with a default 2 GiB DB limit. No account or chat-data migration or deletion is needed. Install the new package in a sibling directory, preserve the previous launcher for rollback, then reconnect the MCP client. [Limits and timeout settings](quickstart-windows.md#large-local-databases) · [Release notes](releases/README.md).
+
 ## Upgrading to v3.0.0
 
-Use this guide from either v1.2.0 or v2.0.0. Install v3.0.0 in a sibling local
+The following v3 security migration requirements also apply to v3.0.1. Commands install the current patch release.
+
+Use this guide from v1.2.0, v2.0.0 or v3.0.0. Install v3.0.1 in a sibling local
 checkout, retarget the existing MCP registration, and keep the prior checkout
 available for rollback. Do not overwrite a working v1/v2 checkout, delete it,
 or force it to the v3 tag with git reset.
 
-v3.0.0 is a breaking security release for named-chat GUI workflows. Every
+v3.0.1 retains the breaking security changes introduced in v3.0.0 for named-chat GUI workflows. Every
 Windows named-chat GUI path, including the five default descriptors, now needs
 CUA plus the existing local-reader Python/DLL prerequisites. The five descriptor
 names, order, and input schemas remain, but their platform availability
@@ -36,7 +42,7 @@ the older GUI behavior.
    (%USERPROFILE%\.line-desktop-mcp\operation.lock on Windows). It serializes
    bridge operations across versions; use one active bridge for normal work.
 4. Check the Node runtime selected by the MCP client. Node 24 LTS or newer is
-   required by v3.0.0.
+   required by v3.0.1.
 
 For a file-based configuration, make a normal copy rather than rewriting the
 existing entry:
@@ -48,7 +54,7 @@ Copy-Item -LiteralPath 'C:\path\to\your-mcp-config.json' -Destination 'C:\path\t
 Use your client's documented export method if it does not store MCP
 configuration in a JSON file.
 
-## Obtain the exact v3.0.0 source
+## Obtain the exact v3.0.1 source
 
 Choose one of the following paths outside OneDrive. Use the published GitHub
 tag or attached release package; do not substitute npm install line-desktop-mcp@latest.
@@ -56,13 +62,13 @@ tag or attached release package; do not substitute npm install line-desktop-mcp@
 ### Git checkout (recommended)
 
 ~~~powershell
-git clone --branch v3.0.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git C:\Tools\line-desktop-mcp-v3
-Set-Location C:\Tools\line-desktop-mcp-v3
+git clone --branch v3.0.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git C:\Tools\line-desktop-mcp-v3.0.1
+Set-Location C:\Tools\line-desktop-mcp-v3.0.1
 git describe --exact-match --tags
 npm ci --ignore-scripts
 ~~~
 
-git describe must print v3.0.0. npm ci --ignore-scripts uses the included
+git describe must print v3.0.1. npm ci --ignore-scripts uses the included
 lockfile and prevents package lifecycle scripts from running during install.
 
 ### GitHub source archive
@@ -70,21 +76,21 @@ lockfile and prevents package lifecycle scripts from running during install.
 Use the tag's source archive only when a Git checkout is unavailable:
 
 ~~~powershell
-$archive = 'C:\Tools\line-desktop-mcp-v3.0.0-source.zip'
-$archiveRoot = 'C:\Tools\line-desktop-mcp-v3.0.0-source'
-Invoke-WebRequest -Uri 'https://github.com/bensonmaxai/line-desktop-mcp/archive/refs/tags/v3.0.0.zip' -OutFile $archive
+$archive = 'C:\Tools\line-desktop-mcp-v3.0.1-source.zip'
+$archiveRoot = 'C:\Tools\line-desktop-mcp-v3.0.1-source'
+Invoke-WebRequest -Uri 'https://github.com/bensonmaxai/line-desktop-mcp/archive/refs/tags/v3.0.1.zip' -OutFile $archive
 Expand-Archive -LiteralPath $archive -DestinationPath $archiveRoot
-Set-Location (Join-Path $archiveRoot 'line-desktop-mcp-3.0.0')
+Set-Location (Join-Path $archiveRoot 'line-desktop-mcp-3.0.1')
 npm ci --ignore-scripts
 ~~~
 
-The source archive is the v3.0.0 GitHub tag snapshot, but has no .git metadata,
+The source archive is the v3.0.1 GitHub tag snapshot, but has no .git metadata,
 so git describe is only available with the checkout path.
 
 ### Attached release package
 
-Alternatively, download `line-desktop-mcp-3.0.0.tgz` and `SHA256SUMS.txt` from the
-[v3.0.0 release](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.0).
+Alternatively, download `line-desktop-mcp-3.0.1.tgz` and `SHA256SUMS.txt` from the
+[v3.0.1 release](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.1).
 Compare the archive's `Get-FileHash -Algorithm SHA256` result with the checksum
 file before extracting. Extract into a new local directory, run
 `npm ci --ignore-scripts` inside its `package` subdirectory, and point the MCP
@@ -93,7 +99,7 @@ the release; it is not a publication to the npm registry or an MCPB bundle.
 
 ## Prepare the required runtime
 
-Complete the v3.0.0 setup in the [Windows installation guide](quickstart-windows.md):
+Complete the v3.0.1 setup in the [Windows installation guide](quickstart-windows.md):
 
 - Node.js 24 LTS or newer.
 - Windows x64, a signed-in supported LINE Desktop build, and a 64-bit Python.
@@ -116,7 +122,7 @@ operation is ready.
 ## Retarget the existing MCP registration
 
 Keep the server name line-desktop-mcp. Change its command, src/server.js
-argument, and environment to point at C:\Tools\line-desktop-mcp-v3; do not
+argument, and environment to point at C:\Tools\line-desktop-mcp-v3.0.1; do not
 create a second normal-workflow server identity.
 
 At minimum, a complete Windows extension configuration is:
@@ -125,11 +131,11 @@ At minimum, a complete Windows extension configuration is:
 {
   "command": "C:/Tools/node/node.exe",
   "args": [
-    "C:/Tools/line-desktop-mcp-v3/src/server.js"
+    "C:/Tools/line-desktop-mcp-v3.0.1/src/server.js"
   ],
   "env": {
     "LINE_MCP_EXTENSIONS": "1",
-    "LINE_MCP_PYTHON": "C:/Tools/line-desktop-mcp-v3/.venv/Scripts/python.exe",
+    "LINE_MCP_PYTHON": "C:/Tools/line-desktop-mcp-v3.0.1/.venv/Scripts/python.exe",
     "LINE_MCP_SQLITE3MC_DLL": "C:/Tools/line-desktop-mcp-runtime/sqlite3mc-2.5.1/dll/sqlite3mc_x64.dll",
     "LINE_MCP_CUA_DRIVER": "C:/Tools/line-desktop-mcp-runtime/cua-driver-rs-0.23.2/cua-driver.exe",
     "LINE_MCP_AUTOHOTKEY": "C:/Program Files/AutoHotkey/v2/AutoHotkey64.exe"
@@ -140,7 +146,7 @@ At minimum, a complete Windows extension configuration is:
 Replace every sample with a real absolute path. The CUA filename is only an
 example; use the extracted driver executable. The AutoHotkey line is optional
 when the standard installation path is available. Do not rely on a checkout
-.env: v3.0.0 receives every LINE_MCP_* value explicitly from the MCP client.
+.env: v3.0.1 receives every LINE_MCP_* value explicitly from the MCP client.
 
 Restart or reconnect the client after retargeting so it refreshes its tool
 schema. Omitting LINE_MCP_EXTENSIONS still exposes the five default descriptors,
@@ -148,7 +154,7 @@ but does not bypass v3's named-chat GUI prerequisites.
 
 ## What changes from v1/v2
 
-| Area | v3.0.0 behavior |
+| Area | v3.0.1 behavior |
 | --- | --- |
 | Package, repository, MCP name | Still line-desktop-mcp; use the same GitHub repository and MCP registration name. |
 | Tool catalogue | LINE_MCP_EXTENSIONS=1 exposes 29 Windows tools. Without it, five default descriptors remain with compatible names, order, and input schemas; descriptions and platform availability are updated. |
@@ -196,8 +202,8 @@ not prove full reader or GUI readiness.
 For synthetic local verification from the v3 checkout:
 
 ~~~powershell
-Set-Location C:\Tools\line-desktop-mcp-v3
-$env:LINE_MCP_PYTHON = 'C:\Tools\line-desktop-mcp-v3\.venv\Scripts\python.exe'
+Set-Location C:\Tools\line-desktop-mcp-v3.0.1
+$env:LINE_MCP_PYTHON = 'C:\Tools\line-desktop-mcp-v3.0.1\.venv\Scripts\python.exe'
 $env:LINE_MCP_SQLITE3MC_DLL = 'C:\Tools\line-desktop-mcp-runtime\sqlite3mc-2.5.1\dll\sqlite3mc_x64.dll'
 npm test
 npm run test:python
@@ -245,7 +251,7 @@ an uncertain send.
 | ENGINE_DLL_UNCONFIGURED or ENGINE_INTEGRITY_FAILED | Recheck the absolute DLL path and SHA-256 from the installation guide. Do not substitute a DLL. |
 | A status call succeeds but local reads fail | get_line_status is not full dependency readiness. Recheck the x64 venv, both imports, configured LINE_MCP_PYTHON, and configured DLL. |
 | LINE_BUSY | Another v1, v2, or v3 bridge operation owns the shared lock. Let it finish and use one active bridge. |
-| Old HTTP settings no longer work | Remove them and configure a local stdio MCP server. v3.0.0 has no HTTP/REST replacement. |
+| Old HTTP settings no longer work | Remove them and configure a local stdio MCP server. v3.0.1 has no HTTP/REST replacement. |
 
 See [Windows installation](quickstart-windows.md) for fixed download hashes and
 complete environment setup, and [Features](features.md) for scope, media, and

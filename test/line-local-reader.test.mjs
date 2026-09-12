@@ -1,11 +1,90 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawn as spawnChild } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { PassThrough } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineGuiChatIdentity,
   runReaderProcess, validateLocalScope } from '../src/extensions/line-local-reader.mjs';
 const args = { chatName: '測試群組', dateFrom: '2026-09-05', dateTo: '2026-09-11' };
 const response = () => ({ ok: true, chatName: args.chatName, chatIdentity: { kind: 'group', displayName: args.chatName, uiIdentityVerified: false }, count: 1, messages: [{ sourceRef: 'message:test', date: '2026-09-05', sourceTimestamp: Date.parse('2026-09-05T00:00:00+08:00'), text: '多行\n😀' }], scope: { kind: 'local_database', truncated: false, requested: { ...args, messageLimit: 200, mediaMode: 'metadata' } }, pagination: { hasMore: false, nextCursor: null } });
 const run = result => async () => ({ code: 0, stdout: JSON.stringify(result) });
+const readerFixture = fileURLToPath(new URL('./test-fixtures/reader-lifecycle-child.mjs', import.meta.url));
+
+async function withSyntheticLocalAppData(t, action) {
+  const previous = process.env.LOCALAPPDATA;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'line-reader-lifecycle-'));
+  process.env.LOCALAPPDATA = root;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = previous;
+    await removeSyntheticLocalAppData(root);
+  });
+  return action(root);
+}
+
+async function removeSyntheticLocalAppData(root) {
+  const parent = path.join(root, 'line-desktop-mcp');
+  const reader = path.join(parent, 'line-reader');
+  try { await fs.rmdir(reader); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  try { await fs.rmdir(parent); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  try { await fs.rmdir(root); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+}
+
+function fixtureSpawn(mode, onSpawn = () => {}) {
+  return (_pythonPath, _pythonArgs, options) => {
+    const child = spawnChild(process.execPath, [readerFixture, mode], {
+      env: options.env,
+      shell: false,
+      stdio: options.stdio,
+      windowsHide: true,
+    });
+    onSpawn(child, options);
+    return child;
+  };
+}
+
+function requestDirectory(spawnOptions) {
+  return path.join(spawnOptions.env.LOCALAPPDATA, 'line-desktop-mcp', 'line-reader',
+    `line-reader-${spawnOptions.env.LINE_MCP_READER_REQUEST_ID}`);
+}
+
+async function removeKnownReaderFiles(directory) {
+  for (const name of ['snapshot.edb-wal', 'snapshot.edb-shm', 'snapshot.edb-journal', 'snapshot.edb']) {
+    try { await fs.unlink(path.join(directory, name)); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  }
+}
+
+function liveMockReaderChild({ streams = true, killResult = false } = {}) {
+  const child = new EventEmitter();
+  child.pid = 12345;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.killCalls = 0;
+  child.kill = () => { child.killCalls++; return killResult; };
+  if (streams) {
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+  }
+  return child;
+}
+
+async function waitForRemoval(target) {
+  for (let attempt = 0; attempt < 25; attempt++) {
+    try { await fs.access(target); }
+    catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.fail(`owned directory was not removed after child close: ${target}`);
+}
 
 test('portable reader refuses implicit Python lookup and preserves fixed setup diagnostics', async () => {
   for (const pythonPath of [null, '', 'python', 'python.exe', './python.exe']) {
@@ -171,7 +250,8 @@ test('cursor scope is checked before launch and response cursor must identify ol
 });
 
 test('safe diagnostic codes survive child failures without exception text or keys', async () => {
-  for (const code of ['RESULT_TOO_LARGE', 'MAIN_DATABASE_AMBIGUOUS', 'LINE_PROCESS_AMBIGUOUS', 'ENGINE_INTEGRITY_FAILED', 'SESSION_KEY_CHANGED', 'INVALID_CURSOR']) {
+  for (const code of ['RESULT_TOO_LARGE', 'MAIN_DATABASE_AMBIGUOUS', 'LINE_PROCESS_AMBIGUOUS', 'ENGINE_INTEGRITY_FAILED', 'SESSION_KEY_CHANGED', 'INVALID_CURSOR',
+    'INVALID_PATH', 'SOURCE_LIMIT_INVALID', 'SNAPSHOT_DESTINATION_EXISTS', 'SNAPSHOT_DISK_FULL', 'SNAPSHOT_IO_ERROR', 'SNAPSHOT_CLEANUP_FAILED']) {
     await assert.rejects(readLocalLineMessages(args, { runProcess: async () => ({ code: 2, stdout: JSON.stringify({ ok: false, code, message: 'secret path/key' }) }) }), error => {
       assert.equal(error.code, code);
       assert.equal(error.message.includes('secret'), false);
@@ -205,4 +285,294 @@ test('direct kind is scope-bound and reader identity must agree before accepting
     await assert.rejects(readLocalLineMessages({ ...args, chatType, cursor }, { runProcess: async () => { calls++; } }), { code: 'CURSOR_SCOPE_MISMATCH' });
   }
   assert.equal(calls, 0);
+});
+
+test('reader parent owns a real hanging child until it exits, then removes its exact scratch directory', async t => {
+  await withSyntheticLocalAppData(t, async () => {
+    let spawned;
+    let scratchDirectory;
+    let ready;
+    const readyPromise = new Promise(resolve => { ready = resolve; });
+    const running = runReaderProcess(args, {
+      pythonPath: process.execPath,
+      timeoutMs: 500,
+      spawnProcess: fixtureSpawn('hang', (child, options) => {
+        spawned = child;
+        scratchDirectory = requestDirectory(options);
+        child.stdout.on('data', chunk => {
+          if (chunk.toString('utf8').includes('READY')) ready();
+        });
+      }),
+    });
+    await readyPromise;
+    await fs.access(path.join(scratchDirectory, 'snapshot.edb'));
+    assert.equal(spawned.exitCode, null);
+    await assert.rejects(running, { code: 'LOCAL_READER_TIMEOUT' });
+    assert.ok(spawned.exitCode !== null || spawned.signalCode !== null);
+    await assert.rejects(fs.access(scratchDirectory), { code: 'ENOENT' });
+  });
+});
+
+test('reader parent cleans synthetic normal and nonzero child exits without reading LINE data', async t => {
+  await withSyntheticLocalAppData(t, async () => {
+    for (const [mode, expectedCode] of [['success', 0], ['nonzero', 2]]) {
+      let scratchDirectory;
+      const output = await runReaderProcess(args, {
+        pythonPath: process.execPath,
+        timeoutMs: 1_000,
+        spawnProcess: fixtureSpawn(mode, (_child, options) => { scratchDirectory = requestDirectory(options); }),
+      });
+      assert.equal(output.code, expectedCode);
+      assert.equal(output.stdout.includes('private synthetic stderr'), false);
+      await assert.rejects(fs.access(scratchDirectory), { code: 'ENOENT' });
+    }
+  });
+});
+
+test('reader parent kills an overflowing synthetic child and cleans only after close', async t => {
+  await withSyntheticLocalAppData(t, async () => {
+    let scratchDirectory;
+    await assert.rejects(runReaderProcess(args, {
+      pythonPath: process.execPath,
+      timeoutMs: 2_000,
+      spawnProcess: fixtureSpawn('overflow', (_child, options) => { scratchDirectory = requestDirectory(options); }),
+    }), { code: 'LOCAL_READER_RESULT_TOO_LARGE' });
+    await assert.rejects(fs.access(scratchDirectory), { code: 'ENOENT' });
+  });
+});
+
+test('reader spawn failures clean the freshly created owned directory and never expose private errors', async t => {
+  await withSyntheticLocalAppData(t, async () => {
+    const secret = 'private-spawn-failure';
+    let scratchDirectory;
+    await assert.rejects(runReaderProcess(args, {
+      pythonPath: process.execPath,
+      spawnProcess: (_pythonPath, _pythonArgs, options) => {
+        scratchDirectory = requestDirectory(options);
+        throw new Error(secret);
+      },
+    }), error => error.code === 'LOCAL_READER_UNAVAILABLE' && !error.message.includes(secret));
+    await assert.rejects(fs.access(scratchDirectory), { code: 'ENOENT' });
+  });
+});
+
+test('reader cleans its owned directory after an asynchronous executable spawn failure', async t => {
+  await withSyntheticLocalAppData(t, async root => {
+    let scratchDirectory;
+    const missingExecutable = path.join(root, 'missing-reader.exe');
+    await assert.rejects(runReaderProcess(args, {
+      pythonPath: missingExecutable,
+      spawnProcess: (executable, commandArgs, options) => {
+        scratchDirectory = requestDirectory(options);
+        return spawnChild(executable, commandArgs, options);
+      },
+    }), { code: 'LOCAL_READER_UNAVAILABLE' });
+    await assert.rejects(fs.access(scratchDirectory), { code: 'ENOENT' });
+  });
+});
+
+test('a live child that refuses termination returns a bounded failure, retains scratch, then cleans only after close', async t => {
+  await withSyntheticLocalAppData(t, async () => {
+    const child = liveMockReaderChild();
+    let scratchDirectory;
+    await assert.rejects(runReaderProcess(args, {
+      pythonPath: process.execPath,
+      timeoutMs: 1,
+      spawnProcess: (_executable, _commandArgs, options) => {
+        scratchDirectory = requestDirectory(options);
+        return child;
+      },
+    }), error => error.code === 'LOCAL_READER_TERMINATION_FAILED'
+      && error.details.mayStillBeRunning === true);
+    assert.equal(child.killCalls, 1);
+    await fs.access(scratchDirectory);
+    child.emit('close', null);
+    await waitForRemoval(scratchDirectory);
+  });
+});
+
+test('a signalled child that never closes also reaches the bounded retained-scratch failure', async t => {
+  await withSyntheticLocalAppData(t, async () => {
+    const child = liveMockReaderChild({ killResult: true });
+    let scratchDirectory;
+    await assert.rejects(runReaderProcess(args, {
+      pythonPath: process.execPath,
+      timeoutMs: 1,
+      spawnProcess: (_executable, _commandArgs, options) => {
+        scratchDirectory = requestDirectory(options);
+        return child;
+      },
+    }), error => error.code === 'LOCAL_READER_TERMINATION_FAILED'
+      && error.details.mayStillBeRunning === true);
+    assert.equal(child.killCalls, 1);
+    await fs.access(scratchDirectory);
+    child.emit('close', null);
+    await waitForRemoval(scratchDirectory);
+  });
+});
+
+test('a malformed injected child with a possible live PID retains scratch until its later close', async t => {
+  await withSyntheticLocalAppData(t, async () => {
+    const child = liveMockReaderChild({ streams: false });
+    let scratchDirectory;
+    await assert.rejects(runReaderProcess(args, {
+      pythonPath: process.execPath,
+      timeoutMs: 1,
+      spawnProcess: (_executable, _commandArgs, options) => {
+        scratchDirectory = requestDirectory(options);
+        return child;
+      },
+    }), error => error.code === 'LOCAL_READER_TERMINATION_FAILED'
+      && error.details.mayStillBeRunning === true);
+    assert.equal(child.killCalls, 1);
+    await fs.access(scratchDirectory);
+    child.emit('close', null);
+    await waitForRemoval(scratchDirectory);
+  });
+});
+
+test('reader rejects malformed scope before configuration, directory work, or spawn', async () => {
+  let spawned = 0;
+  await assert.rejects(runReaderProcess({ ...args, unknownOption: true }, {
+    pythonPath: null,
+    spawnProcess: () => { spawned++; },
+  }), { code: 'LINE_INVALID_ARGUMENT' });
+  assert.equal(spawned, 0);
+});
+
+test('reader rejects invalid environment timeout values before filesystem or spawn work, but allows a small programmatic override', async t => {
+  await withSyntheticLocalAppData(t, async () => {
+    const previous = process.env.LINE_MCP_READER_TIMEOUT_MS;
+    t.after(() => {
+      if (previous === undefined) delete process.env.LINE_MCP_READER_TIMEOUT_MS;
+      else process.env.LINE_MCP_READER_TIMEOUT_MS = previous;
+    });
+    for (const value of ['999', '1800001', '01000', '1000.0', ' 1000', 'not-a-number']) {
+      process.env.LINE_MCP_READER_TIMEOUT_MS = value;
+      let spawned = 0;
+      await assert.rejects(runReaderProcess(args, {
+        pythonPath: process.execPath,
+        spawnProcess: () => { spawned++; },
+      }), { code: 'LOCAL_READER_TIMEOUT_INVALID' });
+      assert.equal(spawned, 0);
+    }
+    process.env.LINE_MCP_READER_TIMEOUT_MS = 'not-a-number';
+    let spawned = 0;
+    await assert.rejects(runReaderProcess(args, {
+      pythonPath: process.execPath,
+      timeoutMs: 5,
+      spawnProcess: () => { spawned++; throw new Error('synthetic only'); },
+    }), { code: 'LOCAL_READER_UNAVAILABLE' });
+    assert.equal(spawned, 1);
+  });
+});
+
+test('reader rejects a junction runtime destination before creating a request directory or spawning', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'line-reader-reparse-root-'));
+  const target = path.join(root, 'target');
+  const junction = path.join(root, 'junction');
+  const previous = process.env.LOCALAPPDATA;
+  await fs.mkdir(target);
+  try {
+    await fs.symlink(target, junction, 'junction');
+  } catch (error) {
+    await fs.rmdir(target);
+    await fs.rmdir(root);
+    if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+      t.skip('Windows did not permit a synthetic junction.');
+      return;
+    }
+    throw error;
+  }
+  t.after(async () => {
+    if (previous === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = previous;
+    await fs.unlink(junction);
+    await fs.rmdir(target);
+    await fs.rmdir(root);
+  });
+  process.env.LOCALAPPDATA = junction;
+  let spawned = 0;
+  await assert.rejects(runReaderProcess(args, {
+    pythonPath: process.execPath,
+    spawnProcess: () => { spawned++; },
+  }), { code: 'LOCAL_READER_UNAVAILABLE' });
+  assert.equal(spawned, 0);
+});
+
+test('reader cleanup refuses unexpected files and reparse snapshot destinations without recursive deletion', async t => {
+  await withSyntheticLocalAppData(t, async root => {
+    let unexpectedDirectory;
+    await assert.rejects(runReaderProcess(args, {
+      pythonPath: process.execPath,
+      spawnProcess: fixtureSpawn('unexpected', (_child, options) => { unexpectedDirectory = requestDirectory(options); }),
+    }), { code: 'LOCAL_READER_CLEANUP_FAILED' });
+    await fs.access(path.join(unexpectedDirectory, 'unexpected-private-file'));
+    await removeKnownReaderFiles(unexpectedDirectory);
+    await fs.unlink(path.join(unexpectedDirectory, 'unexpected-private-file'));
+    await fs.rmdir(unexpectedDirectory);
+
+    let reparseDirectory;
+    try {
+      await assert.rejects(runReaderProcess(args, {
+        pythonPath: process.execPath,
+        spawnProcess: fixtureSpawn('reparse', (_child, options) => { reparseDirectory = requestDirectory(options); }),
+      }), { code: 'LOCAL_READER_CLEANUP_FAILED' });
+      const info = await fs.lstat(path.join(reparseDirectory, 'snapshot.edb'));
+      assert.equal(info.isSymbolicLink(), true);
+      await fs.unlink(path.join(reparseDirectory, 'snapshot.edb'));
+      await fs.rmdir(reparseDirectory);
+    } catch (error) {
+      if (error?.code === 'EPERM' || error?.code === 'EACCES') t.skip('Windows did not permit a synthetic file symlink.');
+      else throw error;
+    }
+    await fs.access(root);
+  });
+});
+
+test('SOURCE_TOO_LARGE exposes only valid configured limit details and filters malformed private child data', async t => {
+  const previous = process.env.LINE_MCP_MAX_WAL_BYTES;
+  t.after(() => {
+    if (previous === undefined) delete process.env.LINE_MCP_MAX_WAL_BYTES;
+    else process.env.LINE_MCP_MAX_WAL_BYTES = previous;
+  });
+  delete process.env.LINE_MCP_MAX_WAL_BYTES;
+  const valid = {
+    ok: false,
+    code: 'SOURCE_TOO_LARGE',
+    details: {
+      sourceKind: 'wal',
+      sourceBytes: 268_435_457,
+      maxBytes: 268_435_456,
+      setting: 'LINE_MCP_MAX_WAL_BYTES',
+    },
+  };
+  await assert.rejects(readLocalLineMessages(args, { runProcess: async () => ({ code: 2, stdout: JSON.stringify(valid) }) }), error => {
+    assert.equal(error.code, 'SOURCE_TOO_LARGE');
+    assert.equal(error.message.includes('private'), false);
+    assert.deepEqual(error.details, valid.details);
+    return true;
+  });
+
+  process.env.LINE_MCP_MAX_WAL_BYTES = '00042';
+  const configured = { ...valid, details: { ...valid.details, sourceBytes: 43, maxBytes: 42 } };
+  await assert.rejects(readLocalLineMessages(args, { runProcess: async () => ({ code: 2, stdout: JSON.stringify(configured) }) }), error => {
+    assert.equal(error.code, 'SOURCE_TOO_LARGE');
+    assert.deepEqual(error.details, configured.details);
+    return true;
+  });
+
+  const secret = 'C:\\private\\database.edb';
+  for (const details of [
+    { ...valid.details, sourceBytes: valid.details.maxBytes },
+    { ...valid.details, sourceKind: 'not-a-source' },
+    { ...valid.details, setting: 'LINE_MCP_MAX_SOURCE_BYTES' },
+    { ...valid.details, privatePath: secret },
+    { sourceKind: 'wal', sourceBytes: '268435457', maxBytes: 268_435_456, setting: 'LINE_MCP_MAX_WAL_BYTES' },
+  ]) {
+    await assert.rejects(readLocalLineMessages(args, { runProcess: async () => ({ code: 2, stdout: JSON.stringify({
+      ok: false, code: 'SOURCE_TOO_LARGE', details, message: secret,
+    }) }) }), error => error.code === 'LOCAL_READER_FAILED'
+      && !error.message.includes(secret) && !JSON.stringify(error.details).includes(secret));
+  }
 });

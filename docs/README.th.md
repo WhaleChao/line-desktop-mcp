@@ -8,7 +8,9 @@
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[ดาวน์โหลด v3.0.0](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.0) · [บันทึกการอัปเดต](releases/v3.0.0.th.md) · [การติดตั้ง](quickstart-windows.md) · [อัปเกรดเป็น v3.0.0](MIGRATING.md#upgrading-to-v300) · [ข้อกำหนดทางเทคนิค](windows-extensions.md)
+[ดาวน์โหลด v3.0.1](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.1) · [บันทึกการอัปเดต](releases/v3.0.1.th.md) · [การติดตั้ง](quickstart-windows.md) · [อัปเกรดเป็น v3.0.1](MIGRATING.md#upgrading-to-v301) · [ข้อกำหนดทางเทคนิค](windows-extensions.md)
+
+**v3.0.1 แก้ไขฐานข้อมูลขนาดใหญ่:** เปลี่ยนเป็นสแนปช็อตแบบสตรีมเพื่อแก้ปัญหาอ่าน DB ที่เกิน 256 MiB ไม่ได้ ขีดจำกัด DB เริ่มต้นคือ 2 GiB โดยยังตรวจสอบ WAL และความเสถียรของไฟล์ต้นทาง ไม่ต้องลบประวัติแชต [บันทึกการอัปเดต](releases/v3.0.1.th.md) · [อัปเกรด](MIGRATING.md#upgrading-to-v301)
 
 **LINE Agent MCP** คือรุ่นชุมชนสำหรับ Windows ที่ดูแลโดย [bensonmaxai](https://github.com/bensonmaxai/line-desktop-mcp) และพัฒนาต่อยอดจาก [โครงการต้นฉบับของ Geoffrey Wang](https://github.com/dtwang/line-desktop-mcp) โครงการนี้เชื่อม MCP client ภายในเครื่องกับ LINE Desktop ที่ลงชื่อเข้าใช้แล้ว ใช้ Codex เป็น client ประจำได้ และ local MCP client อื่นก็เชื่อมต่อได้เช่นกัน โครงการนี้ไม่มีความเกี่ยวข้องกับ LINE อย่างเป็นทางการ
 
@@ -33,27 +35,27 @@
 
 ร่างข้อความธรรมดาจะได้รับการตรวจทานใน Codex เอเจนต์ทำการตรวจสอบ UI ด้วยภาพ แต่การ mention จริงและการเปลี่ยนแปลงเนื้อหาที่แชร์ยังต้องใช้เวิร์กโฟลว์และการอนุมัติของแต่ละงาน แผนงานไม่ใช่หลักฐานว่าการกระทำเกิดขึ้นแล้ว
 
-## การติดตั้งและอัปเกรดเป็น v3.0.0
+## การติดตั้งและอัปเกรดเป็น v3.0.1
 
-หากต้องการใช้ไดเรกทอรีทำงานแยกต่างหาก ให้รับ repository เดิมที่ tag v3.0.0:
+หากต้องการใช้ไดเรกทอรีทำงานแยกต่างหาก ให้รับ repository เดิมที่ tag v3.0.1:
 
 ```powershell
-git clone --branch v3.0.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.0.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
 
-หากย้ายจาก `line-desktop-mcp` v1.2.0 หรือ v2.0.0 ที่มีอยู่ ให้สำรองการตั้งค่า MCP client ปัจจุบันก่อน รับ v3.0.0 ลงในไดเรกทอรี source ใหม่ที่วางคู่กันด้วยคำสั่งข้างต้น แล้วชี้ MCP registration เดิมไปยังไดเรกทอรีใหม่นั้น เก็บ checkout, launcher และการตั้งค่าเดิมไว้สำหรับ rollback บัญชี LINE และข้อมูลแชตไม่ต้องย้าย
+หากย้ายจาก `line-desktop-mcp` v1.2.0 หรือ v2.0.0 ที่มีอยู่ ให้สำรองการตั้งค่า MCP client ปัจจุบันก่อน รับ v3.0.1 ลงในไดเรกทอรี source ใหม่ที่วางคู่กันด้วยคำสั่งข้างต้น แล้วชี้ MCP registration เดิมไปยังไดเรกทอรีใหม่นั้น เก็บ checkout, launcher และการตั้งค่าเดิมไว้สำหรับ rollback บัญชี LINE และข้อมูลแชตไม่ต้องย้าย
 
-ใช้ Node.js 24 LTS ขึ้นไป (ทดสอบแล้ว: 24.19.0) และส่วนประกอบ runtime ที่ตั้งค่าแยกต่างหากตาม tools ที่ต้องใช้ การอ่านในเครื่องต้องใช้ Windows x64, Python x64, `cryptography` และ Pillow, SQLite3MC DLL ที่ตรึงไว้ และ `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` ที่ระบุอย่างชัดเจน ต้องมี Python packages ทั้งสองสำหรับ local read ทุกแบบ รวมถึง metadata mode ใน v3.0.0 การทำงาน GUI กับแชตที่ระบุชื่อบน Windows รวมทั้ง 5 tools เดิม ต้องใช้สิ่งเหล่านี้และ `LINE_MCP_CUA_DRIVER` ด้วย ผู้ใช้หรือ UI แบบมีผู้ใช้กำกับต้องเปิดแชตที่ได้รับอนุญาตก่อน `open_line_chat` จะไม่ค้นหาให้อัตโนมัติ ชื่อที่แสดงแบบดิบต้องตรงทุกตัวอักษร และกรณี NFC เทียบเท่า การยุบ/ตัดช่องว่าง หรือรูปแบบชนกันจากจำนวนสมาชิกจะ fail closed เครื่องมือ UI ใช้ AutoHotkey v2 และ Windows OCR ภายในเครื่องเมื่อจำเป็น ดูรายละเอียดใน[คู่มือการติดตั้ง](quickstart-windows.md)
+ใช้ Node.js 24 LTS ขึ้นไป (ทดสอบแล้ว: 24.19.0) และส่วนประกอบ runtime ที่ตั้งค่าแยกต่างหากตาม tools ที่ต้องใช้ การอ่านในเครื่องต้องใช้ Windows x64, Python x64, `cryptography` และ Pillow, SQLite3MC DLL ที่ตรึงไว้ และ `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` ที่ระบุอย่างชัดเจน ต้องมี Python packages ทั้งสองสำหรับ local read ทุกแบบ รวมถึง metadata mode ใน v3.0.1 การทำงาน GUI กับแชตที่ระบุชื่อบน Windows รวมทั้ง 5 tools เดิม ต้องใช้สิ่งเหล่านี้และ `LINE_MCP_CUA_DRIVER` ด้วย ผู้ใช้หรือ UI แบบมีผู้ใช้กำกับต้องเปิดแชตที่ได้รับอนุญาตก่อน `open_line_chat` จะไม่ค้นหาให้อัตโนมัติ ชื่อที่แสดงแบบดิบต้องตรงทุกตัวอักษร และกรณี NFC เทียบเท่า การยุบ/ตัดช่องว่าง หรือรูปแบบชนกันจากจำนวนสมาชิกจะ fail closed เครื่องมือ UI ใช้ AutoHotkey v2 และ Windows OCR ภายในเครื่องเมื่อจำเป็น ดูรายละเอียดใน[คู่มือการติดตั้ง](quickstart-windows.md)
 
-เชื่อมต่อใหม่และรีเฟรช tool schema ตัวระบุ MCP และ 5 tools เดิมยังคงอยู่ แต่ `stage_line_reply` ต้องใช้ `source` แบบเต็มและ `sourceToken` แบบอายุสั้น ใช้ได้ครั้งเดียว จาก tools สำหรับสังเกต/ยืนยันต้นทาง token จะผูกกับ `chatRef` ใหม่ ชนิดกลุ่ม/direct และพิกเซลที่สังเกต หาก guard ก่อนหรือหลัง GUI พบ drift จะคืนผลปฏิเสธหรือไม่แน่ชัดแม้ได้ลองดำเนินการแล้ว `get_line_status.localReader` รายงาน metadata ของ build/process แยกต่างหาก ไม่ใช่สถานะความพร้อมครบถ้วนของ dependency/DLL [รายละเอียดการอัปเกรดและย้อนกลับ](MIGRATING.md#upgrading-to-v300)
+เชื่อมต่อใหม่และรีเฟรช tool schema ตัวระบุ MCP และ 5 tools เดิมยังคงอยู่ แต่ `stage_line_reply` ต้องใช้ `source` แบบเต็มและ `sourceToken` แบบอายุสั้น ใช้ได้ครั้งเดียว จาก tools สำหรับสังเกต/ยืนยันต้นทาง token จะผูกกับ `chatRef` ใหม่ ชนิดกลุ่ม/direct และพิกเซลที่สังเกต หาก guard ก่อนหรือหลัง GUI พบ drift จะคืนผลปฏิเสธหรือไม่แน่ชัดแม้ได้ลองดำเนินการแล้ว `get_line_status.localReader` รายงาน metadata ของ build/process แยกต่างหาก ไม่ใช่สถานะความพร้อมครบถ้วนของ dependency/DLL [รายละเอียดการอัปเกรดและย้อนกลับ](MIGRATING.md#upgrading-to-v301)
 
 LINE Agent MCP เป็นชื่อที่ใช้แสดงของรุ่นชุมชน Windows นี้ v3.0.0 คือการอัปเกรด major ของ repository และลำดับการเผยแพร่ `line-desktop-mcp` เดิม เพราะเปลี่ยน prerequisites ของ Windows GUI และปิด operational flow บน macOS ไม่ใช่โครงการ GitHub ใหม่หรือชื่อ MCP อื่น
 
 รุ่นนี้ทำงานผ่าน local stdio เท่านั้น ไม่มี HTTP/REST server หรือบริการ cloud แบบมีค่าใช้จ่าย และจะไม่โหลด `.env` ใน current working directory โดยอัตโนมัติ การตั้งค่ามาจาก environment variables ที่ MCP client ส่งมาอย่างชัดเจน
 
-ใช้ `line-desktop-mcp-3.0.0.tgz` และ `SHA256SUMS.txt` จาก GitHub release v3.0.0 โครงการนี้ไม่ได้เผยแพร่บน npm registry และไม่มี MCPB bundle แพ็กเกจเก่า `line-desktop-mcp@latest` จะไม่ติดตั้งรุ่นนี้
+ใช้ `line-desktop-mcp-3.0.1.tgz` และ `SHA256SUMS.txt` จาก GitHub release v3.0.1 โครงการนี้ไม่ได้เผยแพร่บน npm registry และไม่มี MCPB bundle แพ็กเกจเก่า `line-desktop-mcp@latest` จะไม่ติดตั้งรุ่นนี้
 
 ## หลักฐานและขอบเขต
 

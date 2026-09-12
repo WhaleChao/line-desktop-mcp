@@ -2,7 +2,7 @@
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-The v3.0.0 overview and release notes are available in five languages. The technical tool contract and installation guide are maintained in English; exact API identifiers and configuration names are identical in every language.
+The v3.0.1 overview and release notes are available in five languages. The technical tool contract and installation guide are maintained in English; exact API identifiers and configuration names are identical in every language.
 
 | Documentation | Intended readers |
 | --- | --- |
