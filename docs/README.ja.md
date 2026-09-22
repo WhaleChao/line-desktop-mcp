@@ -8,7 +8,10 @@
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[v3.0.1 をダウンロード](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.1) · [リリースノート](releases/v3.0.1.ja.md) · [インストール](quickstart-windows.md) · [v3.0.1 へのアップグレード](MIGRATING.md#upgrading-to-v301) · [技術仕様](windows-extensions.md)
+[v3.1.0 をダウンロード](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.1.0) · [リリースノート](releases/v3.1.0.ja.md) · [インストール](quickstart-windows.md) · [v3.1.0 へのアップグレード](MIGRATING.md#upgrading-to-v310) · [技術仕様](windows-extensions.md)
+
+**v3.1.0 — ローカル読み取り専用 CLI：** `line-cli` を追加しました。機能一覧、ローカル状態、指定チャットと日付の読み取り、および JSON／TXT／CSV 出力に対応します。1 回につき 1 ページ、期間は最大 31 日です。GUI 操作やメッセージ送信は行いません。 [CLI](CLI.md) · [v3.1.0](releases/v3.1.0.ja.md)
+
 
 **v3.0.1 大容量データベースの修正：** 256 MiB を超える DB の読み取り拒否を修正し、ストリーミングスナップショットに変更しました。DB の既定上限は 2 GiB です。WAL とソースの安定性検証は維持され、チャット履歴の削除は不要です。[リリースノート](releases/v3.0.1.ja.md) · [更新](MIGRATING.md#upgrading-to-v301)
 
@@ -35,19 +38,19 @@ Windows で `LINE_MCP_EXTENSIONS=1` を設定すると、**29 個のツール**�
 
 通常のテキスト下書きは Codex で確認します。エージェントは視覚的な UI チェックを実行しますが、実際のメンションや共有コンテンツの変更には、それぞれのワークフローと承認が引き続き必要です。計画があることは、操作が実行済みである証拠にはなりません。
 
-## インストールと v3.0.1 へのアップグレード
+## インストールと v3.1.0 へのアップグレード
 
-新規に別の作業ディレクトリを使う場合は、既存のリポジトリを v3.0.1 タグで取得できます。
+新規に別の作業ディレクトリを使う場合は、既存のリポジトリを v3.1.0 タグで取得できます。
 
 ```powershell
-git clone --branch v3.0.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.1.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
 
-既存の `line-desktop-mcp` v1.2.0 または v2.0.0 から移行する場合は、まず現在の MCP クライアント設定をバックアップしてください。上の手順で v3.0.1 を新しい並列のソースディレクトリに取得し、既存の MCP 登録をそのディレクトリへ向け直します。以前のチェックアウト、ランチャー、設定はロールバック用に残してください。LINE アカウントやチャットデータを移行する必要はありません。
+既存の `line-desktop-mcp` v1.2.0 または v2.0.0 から移行する場合は、まず現在の MCP クライアント設定をバックアップしてください。上の手順で v3.1.0 を新しい並列のソースディレクトリに取得し、既存の MCP 登録をそのディレクトリへ向け直します。以前のチェックアウト、ランチャー、設定はロールバック用に残してください。LINE アカウントやチャットデータを移行する必要はありません。
 
-Node.js 24 LTS 以降（検証済み: 24.19.0）と、利用するツールに応じて別途構成したランタイムコンポーネントを使用してください。ローカル読み取りには Windows x64、Python x64、`cryptography` と Pillow、固定された SQLite3MC DLL、明示的な `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` が必要です。両方の Python パッケージは、メタデータのみのモードを含むすべてのローカル読み取りに必要です。v3.0.1 では標準 5 ツールを含む Windows の名前付きチャット GUI 操作にも、これらと `LINE_MCP_CUA_DRIVER` が必須です。最初にユーザーまたはガイド付き UI で承認済みチャットを開いてください。`open_line_chat` は自動検索しません。生の表示名は完全一致が必要で、NFC 同値、空白の圧縮／トリム、メンバー数の衝突パターンは安全側に拒否されます。必要に応じて AutoHotkey v2 とローカル Windows OCR を用います。詳細は[インストールガイド](quickstart-windows.md)を参照してください。
+Node.js 24 LTS 以降（検証済み: 24.19.0）と、利用するツールに応じて別途構成したランタイムコンポーネントを使用してください。ローカル読み取りには Windows x64、Python x64、`cryptography` と Pillow、固定された SQLite3MC DLL、明示的な `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` が必要です。両方の Python パッケージは、メタデータのみのモードを含むすべてのローカル読み取りに必要です。v3.1.0 では標準 5 ツールを含む Windows の名前付きチャット GUI 操作にも、これらと `LINE_MCP_CUA_DRIVER` が必須です。最初にユーザーまたはガイド付き UI で承認済みチャットを開いてください。`open_line_chat` は自動検索しません。生の表示名は完全一致が必要で、NFC 同値、空白の圧縮／トリム、メンバー数の衝突パターンは安全側に拒否されます。必要に応じて AutoHotkey v2 とローカル Windows OCR を用います。詳細は[インストールガイド](quickstart-windows.md)を参照してください。
 
 再接続してツールスキーマを更新してください。MCP の識別子と既存の 5 個のツールは維持されます。一方で、`stage_line_reply` には完全な `source` と、ソースの観察／確認ツールで得る短期間有効で 1 回限りの `sourceToken` が必要です。トークンは新しい `chatRef`、グループ／ダイレクトの種別、観測したピクセルにも結び付きます。GUI 前後のガードがドリフトを検出した場合、試行後でも拒否または不確実として返します。`get_line_status.localReader` はビルド／プロセスのメタデータを別個に報告し、依存関係や DLL の完全な準備状態は報告しません。[アップグレードとロールバックの詳細](MIGRATING.md#upgrading-to-v301)
 
@@ -55,7 +58,7 @@ LINE Agent MCP は、この Windows 向けコミュニティ版の表示名で�
 
 本リリースはローカル stdio のみで動作し、HTTP/REST サーバーや有料クラウドサービスを提供しません。カレントディレクトリの `.env` は自動で読み込まず、MCP クライアントが明示的に渡す環境変数で構成します。
 
-GitHub の v3.0.1 リリースにある `line-desktop-mcp-3.0.1.tgz` と `SHA256SUMS.txt` を使用してください。本プロジェクトは npm レジストリには公開されず、MCPB バンドルも提供しません。旧い `line-desktop-mcp@latest` パッケージでは本リリースはインストールされません。
+GitHub の v3.1.0 リリースにある `line-desktop-mcp-3.1.0.tgz` と `SHA256SUMS.txt` を使用してください。本プロジェクトは npm レジストリには公開されず、MCPB バンドルも提供しません。旧い `line-desktop-mcp@latest` パッケージでは本リリースはインストールされません。
 
 ## 根拠と制限
 

@@ -8,7 +8,10 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[下載 v3.0.1](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.0.1) · [五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[下載 v3.1.0](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.1.0) · [五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+
+**v3.1.0 — 本機唯讀 CLI：** 新增 `line-cli`，可查能力與本機狀態，並依指定聊天室及日期讀取、匯出 JSON／TXT／CSV。每次只處理一頁，日期最多 31 天；不操作 GUI，也不發送訊息。 [CLI](docs/CLI.md) · [v3.1.0](docs/releases/v3.1.0.zh-TW.md)
+
 
 **v3.0.1 大型資料庫修復：** 修正資料庫超過 256 MiB 就無法讀取的問題，改用串流快照，預設支援 2 GiB DB，並保留 WAL 與來源穩定性檢查。不需要刪除聊天紀錄。[更新說明](docs/releases/v3.0.1.zh-TW.md) · [升級](docs/MIGRATING.md#upgrading-to-v301)
 
@@ -41,7 +44,7 @@ Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後提供 **29 個工具**。未啟用時
 ## 安裝與升級
 
 ```powershell
-git clone --branch v3.0.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.1.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

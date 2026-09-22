@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.1.0 — 2026-09-22 (Asia/Taipei)
+
+**Add a bounded, read-only local CLI.** GitHub tag and `.tgz` release;
+no npm-registry or MCPB publication. Existing MCP entry points and v3 security
+requirements remain in effect.
+
+- Add `line-cli` with help, version, capabilities, local status, scoped
+  `messages read`, and `messages export` commands. Reads require one exact
+  chat and a date range of at most 31 days; every invocation returns one page.
+- Add structured JSON results, request IDs, package version metadata, safe
+  error codes, and explicit exit codes including uncertain export completion.
+- Escape terminal and directional control characters in human-readable output
+  so stored chat text cannot change terminal presentation. JSON retains the
+  original strings. This was found and fixed during the pre-release review.
+- Share the existing export implementation with MCP. JSON preserves the
+  complete page; TXT/CSV report omitted metadata. Exports use a new absolute
+  local path, exclusive creation, and hash/readback verification.
+- Reject unknown/duplicate scope options, all-chat scans, UI comparison,
+  media previews, and send operations. The CLI never initializes the GUI.
+
+Verification: 249 Node tests passed; 124 Python tests passed with one Windows
+symlink-privilege skip. Production npm audit reported zero known vulnerabilities.
+The low-severity terminal-control issue found in review was reproduced with a
+synthetic page, fixed, and covered by a passing regression. Tests use synthetic
+reader results and filesystem fixtures.
+No live LINE chat read, GUI action, or message send is claimed for this CLI
+release. See [CLI usage](docs/CLI.md), [upgrade instructions](docs/MIGRATING.md#upgrading-to-v310),
+and the [five-language release notes](docs/releases/README.md).
+
 ## 3.0.1 — 2026-09-12 (Asia/Taipei)
 
 **Large local database repair ([#1](https://github.com/bensonmaxai/line-desktop-mcp/issues/1)).**

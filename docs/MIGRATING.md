@@ -1,14 +1,24 @@
-# Upgrade to v3.0.1
+# Upgrade to v3.1.0
 
 [Project home](../README.md) · [Windows installation](quickstart-windows.md) · [Features](features.md)
 
-LINE Agent MCP v3.0.1 continues the same
+LINE Agent MCP v3.1.0 continues the same
 [bensonmaxai/line-desktop-mcp](https://github.com/bensonmaxai/line-desktop-mcp)
 repository, package name, and MCP server name: **line-desktop-mcp**. It is
-published from the existing GitHub repository under tag v3.0.1, not to the npm
+published from the existing GitHub repository under tag v3.1.0, not to the npm
 registry and not as an MCPB bundle. LINE account and chat data do not migrate.
 The reader still uses bounded, read-only local copies; it is not an account
 backup or a migration tool.
+
+## Upgrading to v3.1.0
+
+v3.1.0 adds an optional read-only CLI without changing MCP tool names or
+schemas. Install the `v3.1.0` source or release archive in a sibling directory,
+run `npm ci --ignore-scripts`, then check `node src/cli.js --version` and
+`node src/cli.js capabilities --json`. Keep the previous directory and launcher
+for rollback. Existing Python and SQLite3MC configuration still applies.
+No account or chat-data migration is required. CLI local reads do not need CUA;
+MCP GUI operations retain all v3.0.0 requirements. See [CLI usage](CLI.md).
 
 ## Upgrading to v3.0.1
 

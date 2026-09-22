@@ -11,8 +11,10 @@ import { LINE_WORKFLOW_PLAN_PROPERTIES, LINE_WORKFLOW_PLAN_SCHEMA, prepareLineWo
 import { reconcileLineSources } from './line-source-reconciliation.mjs';
 import { requireReplySource } from './line-quote-binding.mjs';
 import { LineToolError, requireChat, requireText, runtimeRequire, toolResult, toolError } from './line-runtime.mjs';
+import { validateExportPath, writeVerifiedExport } from './line-export.mjs';
+export { validateExportPath } from './line-export.mjs';
 
-export const EXTENSION_VERSION = '3.0.1';
+export const EXTENSION_VERSION = '3.1.0';
 const MAX_MEDIA_PREVIEW_BYTES = 256 * 1024;
 // Match the reader's validated original-image contract. The 2048-pixel
 // normalization applies only to derived previews, not small original PNG/JPEG.
@@ -341,7 +343,7 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
       const content = args.format === 'json'
         ? JSON.stringify({ ...data, exportFormat: 'line-history-v1' }, null, 2) + '\n'
         : formatLineHistory(data.messages, { format: args.format }) + '\n';
-      const bytes = await writeVerifiedExport(args.outputPath, content);
+      const bytes = await writeVerifiedExport(args.outputPath, content, { fileSystem });
       return { chatName: args.chatName, outputPath: args.outputPath, format: args.format, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), count: data.count, scope: data.scope, warnings: data.warnings, verified: true };
     },
     verify_line_message: async args => {
@@ -381,39 +383,6 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
     return { success: true, chatName: args.chatName, message: args.message, staged: !autoSend, sendDispatched: autoSend, deliveryVerified: false, mentionVerified: false, timestamp: now().toISOString(), note: autoSend ? 'Dispatch completed. Verify the chat before claiming delivery or retrying.' : 'Draft staged. Nothing sent.' };
   }
 
-  async function writeVerifiedExport(outputPath, content) {
-    const handle = await fileSystem.open(outputPath, 'wx');
-    let postCreateFailed = false;
-    try {
-      await handle.writeFile(content, 'utf8');
-      await handle.sync();
-    } catch {
-      postCreateFailed = true;
-    }
-    try {
-      await handle.close();
-    } catch {
-      postCreateFailed = true;
-    }
-    if (postCreateFailed) throw exportUnverifiedError();
-
-    let bytes;
-    try {
-      bytes = await fileSystem.readFile(outputPath);
-      if (!Buffer.isBuffer(bytes)) throw new TypeError('Export readback was not a byte buffer.');
-    } catch {
-      throw exportUnverifiedError();
-    }
-    if (!bytes.equals(Buffer.from(content))) {
-      throw new LineToolError(
-        'LINE_EXPORT_VERIFY_FAILED',
-        'Export readback differs. The created file was preserved for inspection.',
-        { operationMayHaveCompleted: true, outputPathCreated: true },
-      );
-    }
-    return bytes;
-  }
-
   for (const size of ['short', 'default', 'long']) {
     handlers[`get_line_chatroom_history_${size}`] = async args => {
       const data = await readMessages(args, size);
@@ -435,32 +404,4 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
       } catch (error) { return toolError(error); }
     },
   };
-}
-
-export async function validateExportPath(outputPath, format, { fileSystem = fs } = {}) {
-  requireText(outputPath, 'outputPath', 4096);
-  if (!path.isAbsolute(outputPath) || /^\\\\/.test(outputPath) || path.extname(outputPath).toLowerCase() !== `.${format}`) throw new LineToolError('LINE_INVALID_ARGUMENT', 'Export requires an absolute local path whose extension matches txt/json/csv.');
-  const normalizedPath = path.resolve(outputPath);
-  if (process.platform === 'win32') {
-    if (!/^[A-Za-z]:[\\/]/.test(outputPath)) throw new LineToolError('LINE_INVALID_ARGUMENT', 'Export requires a drive-qualified local Windows path.');
-    if (outputPath.slice(2).includes(':')) throw new LineToolError('LINE_INVALID_ARGUMENT', 'Export path cannot contain Windows alternate data stream syntax.');
-  }
-  const parsed = path.parse(normalizedPath);
-  let current = parsed.root;
-  for (const component of normalizedPath.slice(parsed.root.length).split(path.sep).slice(0, -1)) {
-    current = path.join(current, component);
-    const stat = await fileSystem.lstat(current);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new LineToolError('LINE_EXPORT_PATH_UNSAFE', 'Export parent must be an existing regular directory without junctions or symlinks.');
-  }
-  try { await fileSystem.lstat(outputPath); }
-  catch (error) { if (error.code === 'ENOENT') return; throw error; }
-  throw new LineToolError('LINE_EXPORT_EXISTS', 'Export refuses to overwrite an existing path. Choose a new filename.');
-}
-
-function exportUnverifiedError() {
-  return new LineToolError(
-    'LINE_EXPORT_UNVERIFIED',
-    'Export file was created but could not be durably written and read back. The created file was preserved for inspection.',
-    { operationMayHaveCompleted: true, outputPathCreated: true },
-  );
 }
