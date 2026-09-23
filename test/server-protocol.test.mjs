@@ -79,17 +79,17 @@ test('default history and manual send use the original handlers and response sha
   ]);
 });
 
-test('opt-in exposes 29 unique tools and validates history before any automation', async t => {
+test('opt-in exposes 26 active unique tools and validates history before any automation', async t => {
   const { client, calls } = await connect(t, { extensionsEnabled: true, runtimePlatform: 'win32' });
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 29);
-  assert.equal(new Set(tools.map(tool => tool.name)).size, 29);
+  assert.equal(tools.length, 26);
+  assert.equal(new Set(tools.map(tool => tool.name)).size, 26);
   assert.ok(tools.some(tool => tool.name === 'send_file_manual'));
   const capabilities = body(await client.callTool({ name: 'get_line_capabilities', arguments: {} }));
   assert.equal(capabilities.capabilities.length, 35);
   const chatOpen = capabilities.capabilities.find(capability => capability.id === 'chat_open');
-  assert.match(chatOpen.name, /已開啟/u);
-  assert.match(chatOpen.limit, /does not navigate/u);
+  assert.match(chatOpen.name, /開啟或沿用/u);
+  assert.match(chatOpen.limit, /checks the final exact title/u);
   assert.deepEqual(calls, []);
   const invalid = await client.callTool({ name: 'get_line_chat_messages', arguments: { chatName: 'Example Chat', date: '2026-02-30' } });
   assert.equal(invalid.isError, true);
@@ -119,16 +119,20 @@ test('missing optional CUA does not prevent metadata and never falls through to 
   assert.equal(body(status).localReader.code, 'LINE_CLIENT_STATUS_UNAVAILABLE');
   const send = await client.callTool({ name: 'send_message_auto', arguments: { chatName: 'Example Chat', message: 'not sent' } });
   assert.equal(send.isError, true);
-  assert.equal(body(send).code, 'LINE_UI_BACKEND_UNAVAILABLE');
+  assert.equal(body(send).code, 'LOCAL_READER_UNAVAILABLE');
   assert.deepEqual(calls, []);
 });
 
 test('real default facade refuses unavailable chat verification over MCP before backend activity', async t => {
   const previous = process.env.LINE_MCP_CUA_DRIVER;
+  const previousPython = process.env.LINE_MCP_PYTHON;
   delete process.env.LINE_MCP_CUA_DRIVER;
+  delete process.env.LINE_MCP_PYTHON;
   t.after(() => {
     if (previous === undefined) delete process.env.LINE_MCP_CUA_DRIVER;
     else process.env.LINE_MCP_CUA_DRIVER = previous;
+    if (previousPython === undefined) delete process.env.LINE_MCP_PYTHON;
+    else process.env.LINE_MCP_PYTHON = previousPython;
   });
   for (const runtimePlatform of ['win32', 'darwin']) {
     const backendCalls = [];
@@ -149,7 +153,9 @@ test('real default facade refuses unavailable chat verification over MCP before 
       const result = await client.callTool({ name: descriptor.name, arguments: args });
       assert.equal(result.isError, true, `${runtimePlatform}: ${descriptor.name}`);
       assert.equal(body(result).code, runtimePlatform === 'darwin'
-        ? 'LINE_CHAT_VERIFICATION_UNAVAILABLE' : 'LINE_UI_BACKEND_UNAVAILABLE');
+        ? 'LINE_CHAT_VERIFICATION_UNAVAILABLE'
+        : descriptor.name.startsWith('send_message_') ? 'LOCAL_READER_UNAVAILABLE' : 'LINE_UI_BACKEND_UNAVAILABLE',
+      descriptor.name);
       assert.equal(body(result).operationMayHaveCompleted, false);
       assert.equal(body(result).history, undefined);
       assert.equal(body(result).messages, undefined);
@@ -158,7 +164,7 @@ test('real default facade refuses unavailable chat verification over MCP before 
   }
 });
 
-test('default MCP history and send refuse ambiguous local identity before any UI or legacy call', async t => {
+test('default MCP history and file stage refuse ambiguous local identity before UI input or legacy calls', async t => {
   for (const code of ['CHAT_AMBIGUOUS', 'GUI_IDENTITY_UNAVAILABLE']) {
     const backendCalls = [];
     const automation = Object.create(LineAutomation.prototype);
@@ -172,15 +178,19 @@ test('default MCP history and send refuse ambiguous local identity before any UI
       automation,
       runOperation: (_kind, action) => action(),
       readChatIdentity: async () => { throw new LineToolError(code, 'Synthetic identity refusal.'); },
-      withClient: async action => action({ tools: new Set(), call: async name => {
+      readNamedIdentity: async () => { throw new LineToolError(code, 'Synthetic identity refusal.'); },
+      withClient: async action => action({ tools: new Set(['list_windows']), call: async name => {
+        if (name === 'list_windows') return { windows: [{ app_name: 'LINE.exe', title: 'Example Chat',
+          pid: 42, window_id: 99, is_on_screen: true, minimized: false }] };
         backendCalls.push(name);
-        assert.fail(`Unexpected CUA call: ${name}`);
+        assert.fail(`Unexpected CUA input or snapshot: ${name}`);
       } }),
     });
     const { client } = await connect(t, { automation, extensionsEnabled: false, runtimePlatform: 'win32' });
-    for (const descriptor of legacyTools) {
-      const args = descriptor.name.startsWith('send_')
-        ? { chatName: 'Example Chat', message: 'must not send' } : { chatName: 'Example Chat' };
+    for (const descriptor of legacyTools.filter(item => !item.name.startsWith('send_message_'))) {
+      const args = descriptor.name === 'send_file_manual'
+        ? { chatName: 'Example Chat', filePath: 'C:\synthetic-test.txt' }
+        : { chatName: 'Example Chat' };
       const result = await client.callTool({ name: descriptor.name, arguments: args });
       assert.equal(result.isError, true);
       assert.equal(body(result).code, code);

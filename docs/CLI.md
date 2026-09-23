@@ -3,6 +3,8 @@
 `line-cli` is the command-line entry point for bounded local LINE reads. It
 does not replace the MCP server, initialize `LineUi` or CUA, open a chat,
 stage a draft, send a message, upload a file, or recall content.
+v3.2.0 retains the v3.1.0 command and scope contract. MCP's new plain-text
+send receipt and guided UI workflows do not add CLI send commands.
 
 ## Commands
 
@@ -55,7 +57,7 @@ With `--json`, stdout contains exactly one JSON envelope:
   "ok": true,
   "data": {},
   "meta": {
-    "packageVersion": "3.1.0",
+    "packageVersion": "3.2.0",
     "source": "local-line-reader",
     "durationMs": 0
   }

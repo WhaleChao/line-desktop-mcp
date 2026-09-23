@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineGuiChatIdentity,
   runReaderProcess, validateLocalScope } from '../src/extensions/line-local-reader.mjs';
 const args = { chatName: '測試群組', dateFrom: '2026-09-05', dateTo: '2026-09-11' };
-const response = () => ({ ok: true, chatName: args.chatName, chatIdentity: { kind: 'group', displayName: args.chatName, uiIdentityVerified: false }, count: 1, messages: [{ sourceRef: 'message:test', date: '2026-09-05', sourceTimestamp: Date.parse('2026-09-05T00:00:00+08:00'), text: '多行\n😀' }], scope: { kind: 'local_database', truncated: false, requested: { ...args, messageLimit: 200, mediaMode: 'metadata' } }, pagination: { hasMore: false, nextCursor: null } });
+const response = () => ({ ok: true, chatName: args.chatName, ownSenderRef: null, chatIdentity: { kind: 'group', displayName: args.chatName, uiIdentityVerified: false }, count: 1, messages: [{ sourceRef: 'message:test', date: '2026-09-05', sourceTimestamp: Date.parse('2026-09-05T00:00:00+08:00'), text: '多行\n😀' }], scope: { kind: 'local_database', truncated: false, requested: { ...args, messageLimit: 200, mediaMode: 'metadata' } }, pagination: { hasMore: false, nextCursor: null } });
 const run = result => async () => ({ code: 0, stdout: JSON.stringify(result) });
 const readerFixture = fileURLToPath(new URL('./test-fixtures/reader-lifecycle-child.mjs', import.meta.url));
 

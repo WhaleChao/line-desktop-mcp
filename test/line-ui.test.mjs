@@ -366,10 +366,23 @@ function fakeEnvironment({
     },
     ...(innerAutomation ? { automation: innerAutomation } : {}),
   };
+  const mockedReadChatIdentity = readChatIdentity ?? (async ({ chatName }) => localGuiIdentity(chatName,
+    states[0]?.elements?.some(item => item.label === `${chatName} (2)`) ? 'group' : 'direct'));
   const ui = new LineUi({
     automation,
-    readChatIdentity: readChatIdentity ?? (async ({ chatName }) => localGuiIdentity(chatName,
-      states[0]?.elements?.some(item => item.label === `${chatName} (2)`) ? 'group' : 'direct')),
+    readChatIdentity: mockedReadChatIdentity,
+    readNamedIdentity: async ({ chatName }) => {
+      const result = await mockedReadChatIdentity({ chatName });
+      if (result?.chatName !== chatName || !/^chat:[0-9a-f]{24}$/u.test(result?.chatRef ?? '')
+          || !['direct', 'group'].includes(result?.chatIdentity?.kind)
+          || result.chatIdentity.displayName !== chatName || result.chatIdentity.uiIdentityVerified !== false
+          || result.chatIdentity.guiDisplayNameUnique !== true || result.count !== 0
+          || result.scope?.kind !== 'local_gui_chat_identity'
+          || !Array.isArray(result.messages) || result.messages.length !== 0) {
+        throw Object.assign(new Error('Synthetic identity proof is incomplete.'), { code: 'LINE_CHAT_IDENTITY_UNVERIFIED' });
+      }
+      return { chatRef: result.chatRef, kind: result.chatIdentity.kind };
+    },
     withClient: async callback => callback(api),
     runOperation: async (kind, callback) => {
       locks.push(kind);
@@ -391,7 +404,7 @@ function actionCalls(calls) {
 
 test('ambiguous or unavailable local GUI identity refuses every chat entry before CUA or legacy actions', async () => {
   for (const code of ['CHAT_AMBIGUOUS', 'GUI_IDENTITY_UNAVAILABLE', 'ENGINE_DLL_UNCONFIGURED']) {
-    for (const method of ['openChat', 'getState', 'getDraft', 'setDraft', 'clearDraft', 'sendText', 'readLegacyHistory', 'stageFile', 'openFeature', 'messageAction', 'getReplySourceTarget']) {
+    for (const method of ['openChat', 'getState', 'getDraft', 'setDraft', 'clearDraft', 'readLegacyHistory', 'stageFile', 'openFeature', 'messageAction', 'getReplySourceTarget']) {
       const { ui, calls, automationCalls } = fakeEnvironment({
         states: Array.from({ length: 10 }, () => state([header(), composer('')])),
         readChatIdentity: async () => { throw Object.assign(new Error('identity refused'), { code }); },
@@ -404,7 +417,7 @@ test('ambiguous or unavailable local GUI identity refuses every chat entry befor
           source: { sourceRef: 'message:0123456789abcdef01234567', text: 'source', sender: 'Tester', date: '2026-09-11', time: '10:22:33' },
         } : {}),
       }), { code });
-      assert.deepEqual(calls, [], `${method} must not call CUA`);
+      assert.deepEqual(actionCalls(calls), [], `${method} must not perform CUA input`);
       assert.deepEqual(automationCalls, [], `${method} must not call the legacy backend`);
     }
   }
@@ -436,22 +449,20 @@ test('does not treat a sidebar or global-search hit as an active chat header', a
   });
 
   await assert.rejects(ui.openChat({ chatName: CHAT }), { code: 'LINE_CHAT_UNVERIFIED' });
-  assert.deepEqual(automationCalls, []);
+  assert.deepEqual(automationCalls, ['activate']);
   assert.deepEqual(locks, ['ui-open-chat']);
-  assert.deepEqual(calls.map(call => call.name), [
-    'list_windows', 'get_window_state', 'get_window_state',
-  ]);
+  assert.deepEqual(actionCalls(calls), []);
 });
 
 test('unverified GUI entry points never open the first unverified search result', async () => {
-  for (const method of ['openChat', 'getState', 'getDraft', 'sendText', 'readLegacyHistory']) {
+  for (const method of ['openChat', 'getState', 'getDraft', 'readLegacyHistory']) {
     const { ui, calls, automationCalls } = fakeEnvironment({
       states: Array.from({ length: 6 }, (_, index) =>
         state([headerFor('Another chat'), composer('')], `unverified-${index}`)),
     });
     await assert.rejects(ui[method]({ chatName: CHAT, message: 'not staged', autoSend: false }),
-      { code: 'LINE_CHAT_UNVERIFIED' });
-    assert.deepEqual(automationCalls, [], method);
+      error => ['LINE_CHAT_UNVERIFIED', 'LINE_REPLY_SOURCE_CHAT_TYPE_UNVERIFIED'].includes(error?.code));
+    assert.equal(automationCalls.every(call => call === 'activate'), true, method);
     assert.deepEqual(actionCalls(calls), [], method);
   }
 });
@@ -755,11 +766,11 @@ test('reply source refuses an unproven or opposite direct/group chat before name
   const detached = { ...TARGET, title: CHAT, window_id: 100 };
   const { ui, calls, automationCalls } = fakeEnvironment({
     windows: [detached],
-    states: [state([], 'detached-kind-unknown')],
+    states: [state([], 'detached-kind-unknown'), state([], 'detached-kind-unknown-after')],
   });
   await assert.rejects(
     ui.getReplySourceTarget({ chatRef: CHAT_REF, chatName: CHAT, chatType: 'direct', source }),
-    { code: 'LINE_REPLY_SOURCE_CHAT_TYPE_UNVERIFIED' },
+    { code: 'LINE_REPLY_SOURCE_UNVERIFIED' },
   );
   assert.deepEqual(automationCalls, []);
   assert.equal(calls.some(call => ['right_click', 'click', 'set_value'].includes(call.name)), false);
@@ -1761,33 +1772,9 @@ test('a semantic main header switch before set_value refuses the mutation', asyn
   assert.equal(calls.some(call => call.name === 'set_value'), false);
 });
 
-test('a semantic main header switch before Return leaves the staged draft unsent', async () => {
-  const text = 'stage but do not dispatch after a chat switch';
-  const { ui, calls } = fakeEnvironment({
-    states: [
-      state([header(), composer('')], 'inspect'),
-      state([header(), composer('')], 'write-initial'),
-      state([header(), composer('')], 'write-before'),
-      state([header(), composer(text)], 'write-after'),
-      state([headerFor('另一個聊天室'), composer(text)], 'switched-before-return'),
-    ],
-  });
-
-  await assert.rejects(
-    ui.sendText({ chatName: CHAT, message: text, autoSend: true }),
-    error => error?.code === 'LINE_SEND_UNVERIFIED'
-      && error?.operationMayHaveCompleted === true
-      && error?.details?.draftMayBeStaged === true
-      && error?.details?.sendDispatched === false
-      && error?.details?.previousCode === 'LINE_CHAT_STALE',
-  );
-  assert.equal(calls.filter(call => call.name === 'set_value').length, 1);
-  assert.equal(calls.some(call => call.name === 'press_key'), false);
-});
-
 test('a chat switch after set_value cannot verify a draft in another chat', async () => {
   const text = 'the same draft text does not prove the recipient';
-  for (const method of ['setDraft', 'sendText']) {
+  for (const method of ['setDraft']) {
     const { ui, calls } = fakeEnvironment({
       states: [
         state([header(), composer('')], 'inspect'),
@@ -1804,80 +1791,6 @@ test('a chat switch after set_value cannot verify a draft in another chat', asyn
     assert.equal(calls.filter(call => call.name === 'set_value').length, 1);
     assert.equal(calls.some(call => call.name === 'press_key'), false);
   }
-});
-
-test('a chat switch after Return cannot verify dispatch from another empty composer', async () => {
-  const text = 'Return may have reached the other chat';
-  const { ui, calls } = fakeEnvironment({
-    states: [
-      state([header(), composer('')], 'inspect'),
-      state([header(), composer('')], 'write-initial'),
-      state([header(), composer('')], 'write-before'),
-      state([header(), composer(text)], 'write-after'),
-      state([header(), composer(text)], 'return-before'),
-      state([headerFor('另一個聊天室'), composer('')], 'switched-after-return'),
-    ],
-  });
-  await assert.rejects(ui.sendText({ chatName: CHAT, message: text, autoSend: true }), error =>
-    error?.code === 'LINE_UI_POSTCONDITION_UNAVAILABLE'
-    && error?.operationMayHaveCompleted === true
-    && error?.details?.previousCode === 'LINE_CHAT_STALE'
-    && error?.details?.sendDispatched !== false
-    && !/No action was taken/u.test(error.message));
-  assert.equal(calls.filter(call => call.name === 'press_key').length, 1);
-});
-
-test('an uncertain Return transport is not reported as a known skipped dispatch', async () => {
-  const text = 'the Return transport may already have reached LINE';
-  const uncertain = Object.assign(new Error('transport timed out'), {
-    code: 'LINE_UI_ACTION_UNCERTAIN',
-    operationMayHaveCompleted: true,
-  });
-  const { ui, calls } = fakeEnvironment({
-    states: [
-      state([header(), composer('')], 'inspect'),
-      state([header(), composer('')], 'write-initial'),
-      state([header(), composer('')], 'write-before'),
-      state([header(), composer(text)], 'write-after'),
-      state([header(), composer(text)], 'return-before'),
-    ],
-    handlers: {
-      press_key: () => { throw uncertain; },
-    },
-  });
-
-  await assert.rejects(ui.sendText({ chatName: CHAT, message: text, autoSend: true }), error => error === uncertain);
-  assert.equal(calls.filter(call => call.name === 'press_key').length, 1);
-});
-
-test('a pre-Return schema refusal reports the already-staged draft as partial local state', async () => {
-  const text = 'draft remains after schema refusal';
-  const schemaRefusal = Object.assign(new Error('runtime schema rejected press_key'), {
-    code: 'LINE_UI_INVALID_ARGUMENT',
-    operationMayHaveCompleted: false,
-  });
-  const { ui, calls } = fakeEnvironment({
-    states: [
-      state([header(), composer('')], 'inspect'),
-      state([header(), composer('')], 'write-initial'),
-      state([header(), composer('')], 'write-before'),
-      state([header(), composer(text)], 'write-after'),
-      state([header(), composer(text)], 'return-before-schema-refusal'),
-    ],
-    handlers: {
-      press_key: () => { throw schemaRefusal; },
-    },
-  });
-
-  await assert.rejects(
-    ui.sendText({ chatName: CHAT, message: text, autoSend: true }),
-    error => error?.code === 'LINE_SEND_UNVERIFIED'
-      && error?.operationMayHaveCompleted === true
-      && error?.details?.draftMayBeStaged === true
-      && error?.details?.sendDispatched === false
-      && error?.details?.previousCode === 'LINE_UI_INVALID_ARGUMENT',
-  );
-  assert.equal(calls.filter(call => call.name === 'press_key').length, 1);
 });
 
 test('file-picker failure after an optional draft is reported as partial local state', async () => {
@@ -2037,7 +1950,7 @@ test('legacy history leaves a verified detached chat unchanged because raw AHK t
   assert.deepEqual(rawCalls, []);
 });
 
-test('missing CUA or an unverified main header cannot reach legacy copy or send helpers', async () => {
+test('missing CUA or an unverified main header cannot reach legacy copy helpers', async () => {
   const rawCalls = [];
   const unavailable = Object.assign(new Error('CUA unavailable'), {
     code: 'LINE_UI_BACKEND_UNAVAILABLE',
@@ -2056,7 +1969,6 @@ test('missing CUA or an unverified main header cannot reach legacy copy or send 
     runOperation: async (_kind, callback) => callback(),
   });
   await assert.rejects(missingUi.readLegacyHistory({ chatName: CHAT, pageUpTimes: 5 }), error => error === unavailable);
-  await assert.rejects(missingUi.sendText({ chatName: CHAT, message: 'not sent', autoSend: true }), error => error === unavailable);
 
   const unverified = fakeEnvironment({
     states: Array.from({ length: 4 }, (_, index) => state([

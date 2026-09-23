@@ -19,6 +19,13 @@ export function configuredAutoHotkeyPath(value,
   return candidate;
 }
 
+function validVerifiedLineTarget(target) {
+  return target && Number.isSafeInteger(target.window_id) && target.window_id > 0
+    && Number.isSafeInteger(target.pid) && target.pid > 0
+    && typeof target.title === 'string' && target.title.length > 0
+    && !/[\r\n\0]/u.test(target.title);
+}
+
 // CODEX_LINE_AHK_UTF8_DECODER_V1
 // AHK is configured to emit UTF-8-RAW. Only use charset detection after a
 // strict UTF-8 decode has proved that the output is not valid UTF-8.
@@ -50,19 +57,23 @@ LINE_GUARD_FAIL(code) {
   ExitApp(1)
 }
 
-AcquireExactLineTarget() {
+AcquireExactLineTarget(expectedHwnd := 0, expectedTitle := "LINE", expectedPid := 0) {
   DetectHiddenWindows False
   matches := []
   for hwnd in WinGetList("ahk_exe LINE.exe") {
     try {
       if !DllCall("IsWindowVisible", "Ptr", hwnd, "Int")
         continue
-      if (WinGetTitle("ahk_id " hwnd) != "LINE")
+      if (expectedHwnd && hwnd != expectedHwnd)
+        continue
+      if (WinGetTitle("ahk_id " hwnd) != expectedTitle)
         continue
       if !RegExMatch(WinGetClass("ahk_id " hwnd), "^Qt\d+QWindowIcon$")
         continue
       pid := WinGetPID("ahk_id " hwnd)
       if !pid
+        continue
+      if (expectedPid && pid != expectedPid)
         continue
       matches.Push({ hwnd: hwnd, pid: pid })
     } catch {
@@ -326,10 +337,16 @@ ${script}
     }
   }
 
-  async activateLine() {
+  async activateLine(verifiedTarget) {
+    if (verifiedTarget !== undefined && !validVerifiedLineTarget(verifiedTarget)) {
+      return { success: false, code: 'LINE_TARGET_INVALID', error: 'A verified LINE window is required.' };
+    }
+    const targetExpression = verifiedTarget
+      ? `AcquireExactLineTarget(${verifiedTarget.window_id}, "${this.escapeAhkString(verifiedTarget.title)}", ${verifiedTarget.pid})`
+      : 'AcquireExactLineTarget()';
     const script = `
       ${HISTORY_AHK_GUARDS}
-      AcquireExactLineTarget()
+      ${targetExpression}
       ExitApp(0)
     `;
     try {
@@ -515,15 +532,22 @@ ${script}
     return;
   }
 
-  async stageFileManual(filePath) {
+  async stageFileManual(filePath, verifiedTarget) {
     const safeFilePath = this.escapeAhkString(filePath);
+    if (verifiedTarget && !validVerifiedLineTarget(verifiedTarget)) {
+      return { success: false, code: 'LINE_TARGET_INVALID', error: 'A verified LINE window is required.' };
+    }
+    const targetExpression = verifiedTarget
+      ? `AcquireExactLineTarget(${verifiedTarget.window_id}, "${this.escapeAhkString(verifiedTarget.title)}", ${verifiedTarget.pid})`
+      : 'AcquireExactLineTarget()';
     const script = `
       ${HISTORY_AHK_GUARDS}
       ${LINE_SEND_AHK_GUARDS}
-      target := AcquireExactLineTarget()
-      ; This composited icon location has no semantic identity. GuardedLineClick
-      ; proves only current bounds and exact LINE HWND ownership.
-      GuardedLineClick(target, AttachmentPoint(target))
+      target := ${targetExpression}
+      ${verifiedTarget ? `if (target.pid != ${verifiedTarget.pid})\n        LINE_GUARD_FAIL("LINE_TARGET_PID_CHANGED")` : ''}
+      ; Ctrl+O works in the verified main and independent chat windows.
+      ; Bind HWND/PID/title; never route the attachment to another LINE window.
+      GuardedLineSend(target, "^o")
       Sleep ${this.delayMidLong}
       dialog := AcquireExactLineOpenDialog(target)
       SetExactLineFileName(target, dialog, "${safeFilePath}")

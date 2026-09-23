@@ -25,7 +25,14 @@ import {
   selectAccessibleReplyBubble,
 } from './line-quote-binding.mjs';
 import { withLineOperation } from '../automation/line-operation-lock.mjs';
-import { readLocalLineGuiChatIdentity } from './line-local-reader.mjs';
+import { readLocalLineGuiChatIdentity, readLocalLineGuiCandidateIdentity,
+  readLocalLineGuiGroupCandidateIdentity, readLocalLineMessages } from './line-local-reader.mjs';
+import { DirectChatProof } from './line-direct-proof.mjs';
+import { GroupChatProof } from './line-group-proof.mjs';
+import { sendPlainText, openExactChat, readPlainIdentity } from './line-plain-send.mjs';
+import { searchDirectCandidate, selectDirectCandidate, hasDirectGeometrySnapshot } from './line-direct-navigation.mjs';
+import { searchDirectCandidate as searchGroupCandidate,
+  selectDirectCandidate as selectGroupCandidate } from './line-group-navigation.mjs';
 
 /** The driver-reported application name used to bind every LINE window. */
 export const LINE_APP_NAME = 'LINE.exe';
@@ -46,6 +53,10 @@ export const LINE_FEATURES = Object.freeze([
 
 const ACTIONS = Object.freeze(['copy', 'reply', 'translate', 'forward']);
 const REPLY_CHAT_TYPES = Object.freeze(['direct', 'group']);
+const GROUP_FRAME_ATTEMPTS = 8;
+const GROUP_FRAME_DEADLINE_MS = 15_000;
+const GROUP_FRAME_DELAY_MS = 600;
+const GROUP_CONTEXT_DELAYS_MS = Object.freeze([350, 650, 450, 750, 550, 850, 600]);
 
 // These are fixed labels and shortcuts documented in the local LINE runbook.
 // They are exact alternatives for localized LINE Desktop builds, never
@@ -173,6 +184,11 @@ export class LineUi {
     automation,
     withClient = withCuaClient,
     readChatIdentity = readLocalLineGuiChatIdentity,
+    readNamedIdentity = readPlainIdentity,
+    readDirectCandidate = readLocalLineGuiCandidateIdentity,
+    readDirectMessages = readLocalLineMessages,
+    readGroupCandidate = readLocalLineGuiGroupCandidateIdentity,
+    readGroupMessages = readLocalLineMessages,
     runOperation = withLineOperation,
     recognizeImage = recognizeLineImage,
     findImageLabel = findOcrLabel,
@@ -199,8 +215,9 @@ export class LineUi {
     this.automation = automation;
     this.withClient = withClient;
     this.readChatIdentity = readChatIdentity;
+    this.readNamedIdentity = readNamedIdentity;
     this.runOperation = runOperation;
-    this.ocr = { recognizeImage, findImageLabel };
+    this.ocr = { recognizeImage, findImageLabel, imageDimensions };
     this.visual = {
       fingerprintRegion,
       imageDimensions,
@@ -211,6 +228,60 @@ export class LineUi {
       pendingReplySources: new Map(),
       confirmedReplySources: new Map(),
     };
+    this.readDirectCandidate = readDirectCandidate;
+    this.readDirectMessages = readDirectMessages;
+    this.readGroupCandidate = readGroupCandidate;
+    this.readGroupMessages = readGroupMessages;
+    this.direct = new DirectChatProof({
+      readCandidate: readDirectCandidate, readMessages: readDirectMessages, now, randomToken,
+      search: chatName => this.withClient(api => searchDirectCandidate(api, this.automation, chatName, this.visual)),
+      select: record => this.withClient(async api => {
+        const selected = await selectDirectCandidate(api, this.automation, record, this.visual);
+        return { ...selected, ...await captureDirectProofView(selected.state, selected.window, this.visual, 'header') };
+      }),
+      capture: (record, mode) => this.withClient(async api => {
+        const fresh = await inspectExactMainWindow(api, record.target);
+        const view = await captureDirectProofView(fresh.state, fresh.window, this.visual, mode);
+        if (!sameHeaderFingerprint(record.headerFingerprint, view.headerFingerprint)
+          || (mode === 'verify' && !sameHeaderFingerprint(record.bodyFingerprint, view.bodyFingerprint))) {
+          throw new LineToolError('LINE_DIRECT_VIEW_CHANGED', 'The observed LINE view changed. Request a fresh check.', {sendDispatched:false});
+        }
+        return {target:fresh.target, window:fresh.window, ...view};
+      }),
+    });
+    this.group = new GroupChatProof({
+      readCandidate: readGroupCandidate, readMessages: readGroupMessages, now, randomToken,
+      search: chatName => this.withClient(api => searchGroupCandidate(api, this.automation, chatName, this.visual)),
+      select: record => this.withClient(async api => {
+        const selected = await selectGroupCandidate(api, this.automation, record, this.visual);
+        return { ...selected, ...await captureDirectProofView(selected.state, selected.window, this.visual, 'header') };
+      }),
+      capture: (record, mode, checkLocal) => this.withClient(async api => {
+        if (mode === 'verify') {
+          const matched = await reacquireExactGroupFrame(api, record, this.visual);
+          return {target:matched.target, window:matched.window,
+            headerFingerprint:matched.headerFingerprint, bodyFingerprint:matched.bodyFingerprint,
+            capturedAt:matched.capturedAt};
+        }
+        if (mode === 'context') {
+          return captureRecurringGroupContextFrame(api, record, this.visual, checkLocal);
+        }
+        const fresh = await inspectExactMainWindow(api, record.target);
+        const view = await captureDirectProofView(fresh.state, fresh.window, this.visual, mode);
+        if (!sameHeaderFingerprint(record.headerFingerprint, view.headerFingerprint)) {
+          throw new LineToolError('LINE_GROUP_VIEW_CHANGED', 'The observed group view changed. Request a fresh check.', {sendDispatched:false});
+        }
+        return {target:fresh.target, window:fresh.window, ...view};
+      }),
+    });
+  }
+
+  async prepareDirectChat(args) {
+    return this.#run('ui-direct-chat-proof', () => this.direct.dispatch(args));
+  }
+
+  async prepareGroupChat(args) {
+    return this.#run('ui-group-chat-proof', () => this.group.dispatch(args));
   }
 
   async getStatus() {
@@ -231,10 +302,16 @@ export class LineUi {
 
   async openChat({ chatName } = {}) {
     requireChat(chatName);
-    return this.#run('ui-open-chat', async () => this.#withVerifiedChat(
-      chatName,
-      async (_api, inspected) => chatResult(chatName, inspected),
-    ));
+    return this.#run('ui-open-chat', async () => {
+      const deadline = Date.now() + 30000;
+      const check = () => { if (Date.now() >= deadline) throw new LineToolError('LINE_OPEN_TIMEOUT', 'Opening the named chat timed out.'); };
+      const identity = await this.readNamedIdentity({ chatName });
+      return this.withClient(async rawApi => {
+        const api = { ...rawApi, call(name, args) { check(); return rawApi.call(name, args); } };
+        const inspected = await openExactChat(this, api, chatName, identity.kind, check);
+        return { ...chatResult(chatName, inspected), chatType: identity.kind, chatRef: identity.chatRef };
+      }, { deadline });
+    });
   }
 
   async getState({ chatName, includeScreenshot = false } = {}) {
@@ -459,8 +536,9 @@ export class LineUi {
     }));
   }
 
-  async getDraft({ chatName } = {}) {
+  async getDraft({ chatName, chatType = 'direct' } = {}) {
     requireChat(chatName);
+    requireChoice(chatType, 'chatType', REPLY_CHAT_TYPES);
     return this.#run('ui-get-draft', async () => this.#withVerifiedChat(
       chatName,
       async (api, inspected) => {
@@ -471,6 +549,7 @@ export class LineUi {
         );
         return {
           ...chatResult(chatName, inspected),
+          ...(chatType === 'group' ? { chatType: 'group' } : {}),
           draft: composer.value,
           verification: {
             chat: inspected.proof.kind,
@@ -478,6 +557,7 @@ export class LineUi {
           },
         };
       },
+      { expectedChatType: chatType },
     ));
   }
 
@@ -546,7 +626,7 @@ export class LineUi {
         // Foreground delivery is an explicit caller choice. The guarded
         // facade activates the exact LINE target; openFeature immediately
         // rechecks the same PID/header before it can navigate anything.
-        if (deliveryMode === 'foreground') await activateForegroundFeature(this.automation);
+        if (deliveryMode === 'foreground') await activateForegroundFeature(this.automation, inspected);
         return openFeature(
           api,
           inspected,
@@ -614,21 +694,13 @@ export class LineUi {
     });
   }
 
-  async sendText({ chatName, message, autoSend = false } = {}) {
+  async sendText({ chatName, message, autoSend = false, chatType = 'direct', idempotencyKey } = {}) {
     requireChat(chatName);
     requireText(message, 'message', 10_000);
     requireBoolean(autoSend, 'autoSend');
-    return this.#run('ui-send-text', async () => this.#withVerifiedChat(
-      chatName,
-      async (api, inspected) => sendText(
-        api,
-        inspected,
-        chatName,
-        message,
-        autoSend,
-        composerOptions(inspected, this.#chatGuard(chatName, inspected)),
-      ),
-    ));
+    requireChoice(chatType, 'chatType', REPLY_CHAT_TYPES);
+    if(idempotencyKey!==undefined) requireText(idempotencyKey,'idempotencyKey',160);
+    return this.#run('ui-send-text', () => sendPlainText(this, { chatName, message, autoSend, chatType, idempotencyKey }));
   }
 
   async readLegacyHistory({ chatName, pageUpTimes = 10 } = {}) {
@@ -699,17 +771,15 @@ export class LineUi {
   }
 
   async #findVerifiedChat(api, chatName, { screenshot = false, expectedChatType } = {}) {
-    const identity = await this.#requireChatIdentity(chatName);
+    const initialWindows = await listLineWindows(api);
+    const identity = await this.#identityForWindow(chatName, initialWindows);
     if (expectedChatType !== undefined && identity.kind !== expectedChatType) {
       throw new LineToolError('LINE_REPLY_SOURCE_CHAT_TYPE_MISMATCH', 'The requested reply chat kind differs from the unique local chat identity.');
     }
-    // Local name uniqueness must be established before even inspecting LINE.
-    // A matching title alone cannot distinguish two same-name conversations.
-    const initialWindows = await listLineWindows(api);
+    // Establish uniqueness before inspecting chat content or delivering input.
     const alreadyOpen = await inspectDetachedChat(api, chatName, { screenshot, lineWindows: initialWindows });
     if (alreadyOpen) {
-      if (expectedChatType !== undefined) assertReplySourceChatType(alreadyOpen, expectedChatType);
-      return { ...alreadyOpen, identity };
+      return { ...alreadyOpen, identity, proof: { ...alreadyOpen.proof, chatType: identity.kind } };
     }
 
     const candidate = await inspectMainChat(api, chatName, { screenshot, ocr: this.ocr, lineWindows: initialWindows });
@@ -729,8 +799,8 @@ export class LineUi {
   }
 
   async #findChatState(api, chatName, { screenshot = false } = {}) {
-    const identity = await this.#requireChatIdentity(chatName);
     const initialWindows = await listLineWindows(api);
+    const identity = await this.#identityForWindow(chatName, initialWindows);
     const alreadyOpen = await inspectDetachedChat(api, chatName, { screenshot, lineWindows: initialWindows });
     if (alreadyOpen) return { inspected: { ...alreadyOpen, identity } };
 
@@ -753,6 +823,13 @@ export class LineUi {
       'Open the exact authorized chat using a guided LINE UI workflow, then request a header view if needed. Unverified first-result navigation is disabled.',
       candidate ? chatProofDetails(candidate.state, chatName) : {},
     );
+  }
+
+  async #identityForWindow(chatName, windows) {
+    // Exact window titles need only the named identity; OCR also checks name families.
+    return windows.some(window => isVisibleLineWindow(window) && window.title === chatName)
+      ? this.readNamedIdentity({ chatName })
+      : this.#requireChatIdentity(chatName);
   }
 
   async #requireChatIdentity(chatName) {
@@ -801,6 +878,11 @@ export class LineUi {
   }
 
   #chatGuard(chatName, inspected, options) {
+    if (inspected.groupRecord) return {kind:'scoped-group-context',chatName,target:inspected.target,
+      chatType:'group',identity:inspected.identity,verify:inspected.groupVerify,
+      isFresh:()=>this.group.getVerified(chatName) === inspected.groupRecord};
+    if (inspected.directRecord) return {kind:'scoped-direct-context',chatName,target:inspected.target,
+      chatType:'direct',identity:inspected.identity,verify:inspected.directVerify};
     const expectedChatType = inspected.proof.kind === 'exact-top-level-window-title'
       ? undefined : inspected.identity.kind;
     return { ...createChatGuard(chatName, inspected, this.ocr, this.visual, { expectedChatType, ...options }),
@@ -961,13 +1043,13 @@ function sameLocalChatIdentity(left, right) {
   return Boolean(left && right && left.chatRef === right.chatRef && left.kind === right.kind);
 }
 
-async function activateForegroundFeature(automation) {
+async function activateForegroundFeature(automation, inspected) {
   if (typeof automation?.activateLine !== 'function') {
     throw new LineToolError('LINE_AUTOMATION_UNAVAILABLE', 'Existing LINE automation does not implement activateLine.');
   }
   let activation;
   try {
-    activation = await automation.activateLine();
+    activation = await automation.activateLine({ ...inspected.target, title: inspected.window.title });
   } catch (error) {
     throw new LineToolError(
       'LINE_FOCUS_UNAVAILABLE',
@@ -1451,12 +1533,38 @@ function rectInside(inner, outer, tolerance = 1) {
     && inner.y + inner.height <= outer.y + outer.height + tolerance;
 }
 
-async function recognizeGroundedWindowImage(state, ocr) {
+async function recognizeGroundedWindowImage(state, ocr, window) {
   const images = Array.isArray(state?.images) ? state.images : [];
-  if (images.length !== 1 || !images[0] || typeof images[0] !== 'object') return undefined;
+  let selected;
+  let expected;
+  if (window) {
+    expected = windowBoundsFrame(window);
+    const roots = (Array.isArray(state?.elements) ? state.elements : []).filter(element => {
+      const frame = elementFrame(element);
+      return normalized(element?.role) === 'window' && frame && expected
+        && ['x', 'y', 'width', 'height'].every(key => Math.abs(frame[key] - expected[key]) <= 1);
+    });
+    if (roots.length !== 1) return undefined;
+    const matching = images.filter(image => {
+      try {
+        const dimensions = ocr.imageDimensions(image);
+        return dimensions?.width === expected.width && dimensions?.height === expected.height;
+      } catch {
+        return false;
+      }
+    });
+    if (matching.length !== 1) return undefined;
+    selected = matching[0];
+  } else {
+    if (images.length !== 1) return undefined;
+    selected = images[0];
+  }
+  if (!selected || typeof selected !== 'object') return undefined;
   try {
-    const recognized = await ocr.recognizeImage(images[0]);
-    return validGroundedOcr(recognized) ? recognized : undefined;
+    const recognized = await ocr.recognizeImage(selected);
+    return validGroundedOcr(recognized)
+      && (!expected || (recognized.width === expected.width && recognized.height === expected.height))
+      ? recognized : undefined;
   } catch {
     // OCR is only a conservative fallback. Its unavailability cannot turn an
     // unknown chat or control into a success.
@@ -1691,9 +1799,168 @@ function sameRegion(first, second) {
   return ['x', 'y', 'width', 'height'].every(key => first?.[key] === second?.[key]);
 }
 
+function groupViewChanged() {
+  return new LineToolError('LINE_GROUP_VIEW_CHANGED',
+    'The proven group view changed before the action.', {sendDispatched:false});
+}
+
+function sameGroupWindow(first, second) {
+  return second?.app_name === first?.app_name && second?.title === first?.title
+    && second?.is_on_screen === true && second?.minimized !== true
+    && sameTarget(first, second)
+    && ['x', 'y', 'width', 'height'].every(key => first?.bounds?.[key] === second?.bounds?.[key]);
+}
+
+function sameFingerprintGeometry(first, second) {
+  return first?.width === second?.width && first?.height === second?.height
+    && sameRegion(first?.region, second?.region);
+}
+
+// Check the complete header and body rectangle on every frame. Only the body
+// SHA may differ while the bounded animation reacquisition is in progress.
+async function captureExactGroupFrame(api, record, state, visual, mode = 'verify') {
+  const windows = await listLineWindows(api);
+  const exact = windows.filter(window => isVisibleLineWindow(window)
+    && window.title === 'LINE' && sameTarget(targetFromWindow(window), record.target));
+  if (exact.length !== 1 || !sameGroupWindow(record.window, exact[0])) throw groupViewChanged();
+  let view;
+  try {
+    view = await captureDirectProofView(state, exact[0], visual, mode);
+  } catch {
+    throw groupViewChanged();
+  }
+  if (!sameHeaderFingerprint(record.headerFingerprint, view.headerFingerprint)
+    || (mode === 'verify' && !sameFingerprintGeometry(record.bodyFingerprint, view.bodyFingerprint))) {
+    throw groupViewChanged();
+  }
+  return {target:record.target, window:exact[0], state, ...view};
+}
+
+async function reacquireExactGroupFrame(api, record, visual, checkLocal) {
+  const deadline = performance.now() + GROUP_FRAME_DEADLINE_MS;
+  for (let attempt = 0; attempt < GROUP_FRAME_ATTEMPTS; attempt += 1) {
+    if (performance.now() >= deadline) throw groupViewChanged();
+    if (checkLocal) await checkLocal();
+    if (performance.now() >= deadline) throw groupViewChanged();
+    let fresh;
+    try {
+      fresh = await inspectExactMainWindow(api, record.target);
+    } catch {
+      throw groupViewChanged();
+    }
+    if (performance.now() >= deadline) throw groupViewChanged();
+    if (!sameGroupWindow(record.window, fresh.window)) throw groupViewChanged();
+    const observed = await captureExactGroupFrame(api, record, fresh.state, visual);
+    if (performance.now() >= deadline) throw groupViewChanged();
+    if (sameHeaderFingerprint(record.bodyFingerprint, observed.bodyFingerprint)) return observed;
+    if (attempt + 1 < GROUP_FRAME_ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, GROUP_FRAME_DELAY_MS));
+      if (performance.now() >= deadline) throw groupViewChanged();
+    }
+  }
+  throw groupViewChanged();
+}
+
+// Context selection is observational: it never uses a screenshot token for
+// input. A one-off transition frame cannot become the later verify target.
+async function captureRecurringGroupContextFrame(api, record, visual, checkLocal) {
+  if (typeof checkLocal !== 'function') {
+    throw new LineToolError('LINE_GROUP_PROOF_LOCAL_UNAVAILABLE',
+      'The group context cannot be sampled without its local-evidence guard.', {sendDispatched:false});
+  }
+  const deadline = performance.now() + GROUP_FRAME_DEADLINE_MS;
+  const seen = new Set();
+  let bodyGeometry;
+  for (let attempt = 0; attempt < GROUP_FRAME_ATTEMPTS; attempt += 1) {
+    if (performance.now() >= deadline) throw groupViewChanged();
+    await checkLocal();
+    if (performance.now() >= deadline) throw groupViewChanged();
+    let fresh;
+    try {
+      fresh = await inspectExactMainWindow(api, record.target);
+    } catch {
+      throw groupViewChanged();
+    }
+    if (performance.now() >= deadline || !sameGroupWindow(record.window, fresh.window)) {
+      throw groupViewChanged();
+    }
+    const observed = await captureExactGroupFrame(api, record, fresh.state, visual, 'group-context-sample');
+    if (performance.now() >= deadline) throw groupViewChanged();
+    if (bodyGeometry && !sameFingerprintGeometry(bodyGeometry, observed.bodyFingerprint)) {
+      throw groupViewChanged();
+    }
+    bodyGeometry ??= observed.bodyFingerprint;
+    if (seen.has(observed.bodyFingerprint.sha256)) {
+      // Render only the winning, already fingerprinted screenshot. The full
+      // context PNG is not needed for any discarded animation frame.
+      let crop;
+      try {
+        crop = await visual.fingerprintRegion(
+          observed.state.images[0], observed.contextRegion, {includeImage:true});
+      } catch {
+        throw groupViewChanged();
+      }
+      if (performance.now() >= deadline
+          || !validHeaderFingerprint(crop, observed.contextRegion, true, visual.imageDimensions)) {
+        throw groupViewChanged();
+      }
+      const {contextRegion: _contextRegion, ...winner} = observed;
+      return {...winner, contextImage:crop.image};
+    }
+    seen.add(observed.bodyFingerprint.sha256);
+    if (attempt + 1 < GROUP_FRAME_ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, GROUP_CONTEXT_DELAYS_MS[attempt]));
+      if (performance.now() >= deadline) throw groupViewChanged();
+    }
+  }
+  throw groupViewChanged();
+}
+
 function withoutHeaderImage(value) {
   const { image: _image, ...fingerprint } = value;
   return fingerprint;
+}
+
+/** Observe only one structurally bounded right pane; this grants no input. */
+export async function captureDirectProofView(state, window, visual, mode) {
+  const unavailable = () => new LineToolError('LINE_DIRECT_VIEW_UNAVAILABLE',
+    'The bounded LINE header and message area could not be captured.', {sendDispatched:false});
+  const elements = Array.isArray(state?.elements) ? state.elements : [];
+  if (!hasDirectGeometrySnapshot(state) || elements.some(element => hasMarker(element, MODAL_MARKERS)
+    || ['menu', 'menuitem', 'menu-item'].includes(normalized(element?.role)))) throw unavailable();
+  const header = await captureHeaderFingerprint(state, window, visual, {includeImage:mode === 'header'});
+  if (!header) throw unavailable();
+  const result = {headerFingerprint:withoutHeaderImage(header), capturedAt:new Date(visual.now()).toISOString()};
+  if (mode === 'header') return {...result, headerImage:header.image};
+  if (!['context', 'verify', 'receipt', 'group-context-sample'].includes(mode)) throw unavailable();
+  const bands = findMainChatBands(state);
+  const composer = findMainComposerCandidate(state);
+  const composerFrame = elementFrame(composer?.element);
+  if (bands.length !== 1 || !composerFrame) throw unavailable();
+  const band = bands[0];
+  const rootFrame = findScreenshotRootFrame(state, window, band);
+  const images = state.images;
+  if (!rootFrame || !Array.isArray(images) || images.length !== 1
+    || !rectInside(composerFrame, band.bodyFrame)) throw unavailable();
+  const dimensions = visual.imageDimensions(images[0]);
+  if (!validImageDimensions(dimensions) || !matchesReportedScreenshotDimensions(state, dimensions)) throw unavailable();
+  const bottom = composerFrame.y - 2;
+  const body = {x:band.bodyFrame.x, y:band.bodyFrame.y, width:band.bodyFrame.width, height:bottom-band.bodyFrame.y};
+  if (body.height < 40) throw unavailable();
+  const bodyRegion = frameInScreenshot(body, rootFrame, dimensions);
+  if (!bodyRegion) throw unavailable();
+  const bodyFingerprint = await visual.fingerprintRegion(images[0], bodyRegion, {includeImage:false});
+  if (!validHeaderFingerprint(bodyFingerprint, bodyRegion, false, visual.imageDimensions)) throw unavailable();
+  result.bodyFingerprint = bodyFingerprint;
+  if (mode === 'verify') return result;
+  const headerFrame = elementFrame(findContentHeaderContainer(state, band));
+  if (!headerFrame) throw unavailable();
+  const contextRegion = frameInScreenshot({x:body.x,y:headerFrame.y,width:body.width,height:bottom-headerFrame.y},rootFrame,dimensions);
+  if (!contextRegion) throw unavailable();
+  if (mode === 'group-context-sample') return {...result, contextRegion};
+  const crop = await visual.fingerprintRegion(images[0], contextRegion, {includeImage:true});
+  if (!validHeaderFingerprint(crop, contextRegion, true, visual.imageDimensions)) throw unavailable();
+  return {...result, [mode === 'receipt' ? 'receiptImage' : 'contextImage']:crop.image};
 }
 
 /**
@@ -1877,19 +2144,23 @@ function composerOptions(inspected, guard) {
 }
 
 function isVerifiedMainChatGuard(guard) {
-  return guard?.kind === 'semantic-main-header'
+  return guard?.kind === 'scoped-direct-context' || guard?.kind === 'scoped-group-context'
+    || guard?.kind === 'semantic-main-header'
     || guard?.kind === 'ocr-main-header'
     || guard?.kind === 'visual-main-header-crop';
 }
 
 function replyChatTypeFromProof(proof) {
   switch (proof?.kind) {
+    case 'scoped-direct-context':
     case 'exact-chat-pane-header':
     case 'grounded-ocr-main-chat-header':
       return 'direct';
     case 'exact-chat-pane-group-header':
     case 'grounded-ocr-main-group-chat-header':
+    case 'scoped-group-context':
       return 'group';
+    case 'exact-top-level-window-title':
     case 'cached-caller-confirmed-main-header-crop':
       return REPLY_CHAT_TYPES.includes(proof.chatType) ? proof.chatType : undefined;
     default:
@@ -1954,29 +2225,35 @@ function createChatGuard(chatName, inspected, ocr, visual, { expectedChatType } 
 }
 
 function chatGuardNeedsScreenshot(guard) {
-  return guard?.kind === 'ocr-main-header' || guard?.kind === 'visual-main-header-crop';
+  return guard?.kind === 'scoped-direct-context' || guard?.kind === 'scoped-group-context'
+    || guard?.kind === 'ocr-main-header' || guard?.kind === 'visual-main-header-crop';
 }
 
 async function assertChatGuard(api, target, state, guard) {
-  if (!guard) return;
+  if (!guard) return state;
   if (!sameTarget(target, guard.target)) {
     throw new LineToolError('LINE_CHAT_STALE', 'The selected LINE target changed before the action. No action was taken.');
   }
-  if (guard.kind === 'semantic-main-header') {
+  if (guard.kind === 'scoped-group-context') {
+    return guard.verify(state, guard.headerOnly === true);
+  } else if (guard.kind === 'scoped-direct-context') {
+    await guard.verify(state, guard.headerOnly === true);
+    return state;
+  } else if (guard.kind === 'semantic-main-header') {
     const proof = findChatHeaderProof(state, guard.chatName, { requireContentHeaderBand: true });
-    if (proof && (guard.chatType === undefined || replyChatTypeFromProof(proof) === guard.chatType)) return;
+    if (proof && (guard.chatType === undefined || replyChatTypeFromProof(proof) === guard.chatType)) return state;
   } else if (guard.kind === 'ocr-main-header') {
     const proof = await findMainHeaderOcrProof(state, guard.chatName, guard.window, guard.ocr);
-    if (proof && (guard.chatType === undefined || replyChatTypeFromProof(proof) === guard.chatType)) return;
+    if (proof && (guard.chatType === undefined || replyChatTypeFromProof(proof) === guard.chatType)) return state;
   } else if (guard.kind === 'visual-main-header-crop') {
     const fingerprint = await captureHeaderFingerprint(state, guard.window, guard.visual, { includeImage: false });
-    if (fingerprint && sameHeaderFingerprint(guard.fingerprint, fingerprint)) return;
+    if (fingerprint && sameHeaderFingerprint(guard.fingerprint, fingerprint)) return state;
   } else if (guard.kind === 'detached-title') {
     const windows = await listLineWindows(api);
     const matches = windows.filter(window => isVisibleLineWindow(window)
       && window.title === guard.chatName
       && sameTarget(targetFromWindow(window), guard.target));
-    if (matches.length === 1) return;
+    if (matches.length === 1) return state;
   } else {
     throw new LineToolError('LINE_UI_BACKEND_PROTOCOL', 'The chat guard had an unknown verification kind.');
   }
@@ -2030,6 +2307,11 @@ function findComposer(state, {
  */
 function findMainComposerFallback(state, guard) {
   if (!isVerifiedMainChatGuard(guard)) return undefined;
+  return findMainComposerCandidate(state);
+}
+
+// Geometry-only observation. This locator never grants permission to input.
+function findMainComposerCandidate(state) {
   const elements = Array.isArray(state?.elements) ? state.elements : [];
   if (elements.some(element => hasMarker(element, MODAL_MARKERS))) {
     return undefined;
@@ -2084,23 +2366,25 @@ function hasAncestorIndex(element, expectedIndex, byIndex) {
 /**
  * Live CUA evidence for a detached LINE chat window: its rich composer is
  * exactly one Edit with a direct Group child named qt_scrollarea_viewport.
+ * A separate Search Edit can coexist without this rich-editor child.
  * An empty composer serializes with neither label nor value. This condition is
  * deliberately narrower than accepting an arbitrary Edit or an absent value.
  */
 function findDetachedComposerFallback(state) {
   const edits = state.elements.filter(element => normalized(element.role) === 'edit');
-  if (edits.length !== 1 || state.elements.some(element => normalized(element.role) === 'dialog')) {
+  if (state.elements.some(element => normalized(element.role) === 'dialog')) {
     return undefined;
   }
-  const element = edits[0];
-  const index = elementIndex(element);
-  if (index === undefined || !state.elements.some(child => (
-    child.parent_index === index
-    && normalized(child.role) === 'group'
-    && hasExactLabel(child, ['qt_scrollarea_viewport'])
-  ))) {
-    return undefined;
-  }
+  const richEditors = edits.filter(edit => {
+    const index = elementIndex(edit);
+    return index !== undefined && state.elements.some(child => (
+      parentIndex(child) === index
+      && normalized(child.role) === 'group'
+      && hasExactLabel(child, ['qt_scrollarea_viewport'])
+    ));
+  });
+  if (richEditors.length !== 1) return undefined;
+  const element = richEditors[0];
 
   const value = elementValue(element);
   if (value !== undefined) {
@@ -2119,8 +2403,8 @@ function elementValue(element) {
 }
 
 async function readComposer(api, target, options) {
-  const state = await snapshot(api, target, { screenshot: chatGuardNeedsScreenshot(options?.guard) });
-  await assertChatGuard(api, target, state, options?.guard);
+  const initial = await snapshot(api, target, { screenshot: chatGuardNeedsScreenshot(options?.guard) });
+  const state = await assertChatGuard(api, target, initial, options?.guard);
   return { state, composer: findComposer(state, options) };
 }
 
@@ -2129,11 +2413,15 @@ async function runUiInput(api, target, resolve, toolName, args = {}, {
   screenshot = false,
   allowTargetClosedAfter = false,
   guard,
+  postGuard = guard,
   deliveryMode,
 } = {}) {
-  const before = await snapshot(api, target, { screenshot: screenshot || chatGuardNeedsScreenshot(guard) });
-  await assertChatGuard(api, target, before, guard);
+  const initial = await snapshot(api, target, { screenshot: screenshot || chatGuardNeedsScreenshot(guard) });
+  const before = await assertChatGuard(api, target, initial, guard);
   const resolved = await resolve(before);
+  if (guard?.kind === 'scoped-group-context' && guard.isFresh() !== true) {
+    throw new LineToolError('LINE_GROUP_PROOF_EXPIRED', 'Group proof expired. Nothing was sent.', {sendDispatched:false});
+  }
   // A feature resolver can explicitly prove that its fresh pre-input state is
   // already open. No CUA input was delivered, so preserve that distinction
   // instead of treating it as a selector failure or replaying an action.
@@ -2160,10 +2448,10 @@ async function runUiInput(api, target, resolve, toolName, args = {}, {
     ...(BACKGROUND_DELIVERY_TOOLS.has(toolName) ? { delivery_mode: deliveryMode ?? 'background' } : {}),
   });
   try {
-    const after = await snapshot(api, target, { screenshot: screenshot || chatGuardNeedsScreenshot(guard) });
+    const observedAfter = await snapshot(api, target, { screenshot: screenshot || chatGuardNeedsScreenshot(guard) });
     // A matching composer value cannot establish which chat received input.
     // Post-input failures are uncertain even when the pre-input guard passed.
-    await assertChatGuard(api, target, after, guard);
+    const after = await assertChatGuard(api, target, observedAfter, postGuard);
     return { target, before, after, result, resolved };
   } catch (afterError) {
     if (!allowTargetClosedAfter || guard) {
@@ -2179,8 +2467,7 @@ async function runUiInput(api, target, resolve, toolName, args = {}, {
 
 async function assertFreshChatGuard(api, target, guard) {
   const state = await snapshot(api, target, { screenshot: chatGuardNeedsScreenshot(guard) });
-  await assertChatGuard(api, target, state, guard);
-  return state;
+  return assertChatGuard(api, target, state, guard);
 }
 
 function isWindowScreenshotPoint(value) {
@@ -2221,102 +2508,7 @@ async function writeDraft(api, target, desiredValue, expectedDraft, composerConf
   return { changed: true, raw: write.result, composerVerification: after.verification };
 }
 
-async function sendText(api, inspected, chatName, message, autoSend, composerConfig) {
-  // An omitted expectedDraft is deliberately conservative: sent/staged text
-  // never overwrites a draft the user already started in LINE.
-  const write = await writeDraft(api, inspected.target, message, undefined, composerConfig);
-  const raw = { draft: withoutImages(write.raw) };
-  if (!autoSend) {
-    return {
-      ...chatResult(chatName, inspected),
-      staged: true,
-      sendDispatched: false,
-      deliveryVerified: false,
-      verification: {
-        chat: inspected.proof.kind,
-        draft: write.changed ? write.composerVerification : 'already-matched',
-      },
-      raw,
-    };
-  }
-
-  // The current public CUA schema rejects a one-key `hotkey`; `press_key` is
-  // the schema-defined, background-safe path for a plain Return key.
-  let dispatched;
-  try {
-    dispatched = await runUiInput(api, inspected.target, state => {
-      const composer = findComposer(state, composerConfig);
-      if (composer.value !== message) {
-        throw new LineToolError(
-          'LINE_SEND_UNVERIFIED',
-          'LINE draft changed before dispatch. It was not sent by this operation.',
-        );
-      }
-      return { element: composer.element };
-    }, 'press_key', { key: 'return' }, {
-      guard: composerConfig?.guard,
-    });
-  } catch (error) {
-    // Runtime schema/refusal failures occur inside api.call before the CUA
-    // input is delivered. They still leave a verified staged draft behind.
-    // A true uncertainty flag is the only signal that Return might have run.
-    if (write.changed === true && error?.operationMayHaveCompleted !== true) {
-      throw partialSendError(error);
-    }
-    throw error;
-  }
-
-  let after;
-  try {
-    after = findComposer(dispatched.after, composerConfig);
-  } catch (error) {
-    throw new LineToolError(
-      'LINE_SEND_UNVERIFIED',
-      'LINE accepted Return but did not expose a readable post-dispatch composer. Inspect the chat before retrying.',
-      { operationMayHaveCompleted: true, previousCode: error?.code },
-    );
-  }
-  if (after.value !== '') {
-    throw new LineToolError(
-      'LINE_SEND_UNVERIFIED',
-      'LINE did not clear the exact dispatched draft. Inspect the chat before retrying.',
-      { operationMayHaveCompleted: true },
-    );
-  }
-  raw.dispatch = withoutImages(dispatched.result);
-  return {
-    ...chatResult(chatName, inspected),
-    staged: false,
-    sendDispatched: true,
-    deliveryVerified: false,
-    verification: {
-      chat: inspected.proof.kind,
-      draft: 'empty-composer-readback',
-    },
-    raw,
-  };
-}
-
-function partialSendError(error) {
-  return new LineToolError(
-    'LINE_SEND_UNVERIFIED',
-    'LINE staged the requested draft but did not reach Return. Inspect the draft before retrying.',
-    {
-      operationMayHaveCompleted: true,
-      draftMayBeStaged: true,
-      sendDispatched: false,
-      previousCode: error?.code ?? error?.name ?? null,
-    },
-  );
-}
-
 async function stageFile(api, automation, inspected, chatName, filePath, optionalMessage, composerConfig) {
-  if (inspected.window?.title !== 'LINE') {
-    throw new LineToolError(
-      'LINE_FILE_STAGE_UNVERIFIED',
-      'File staging is available only after exact main-window chat verification; a detached chat window was left unchanged.',
-    );
-  }
   const stageFileManual = automation?.automation?.stageFileManual;
   if (typeof stageFileManual !== 'function') {
     throw new LineToolError(
@@ -2357,7 +2549,8 @@ async function stageFile(api, automation, inspected, chatName, filePath, optiona
   // Open.
   let result;
   try {
-    result = await stageFileManual.call(automation.automation, filePath);
+    result = await stageFileManual.call(automation.automation, filePath,
+      {...inspected.target, title:inspected.window.title});
   } catch (error) {
     throw partialStageError(error, { draftMayBeStaged, pickerMayBeOpen: true });
   }
@@ -2413,7 +2606,7 @@ async function openFeature(api, inspected, chatName, feature, ocr, imageDimensio
   // observation must short-circuit an already-open feature before it can be
   // clicked closed by a retry.
   const preflight = await assertFreshChatGuard(api, inspected.target, guard);
-  const alreadyOpen = findFeatureStateProof(preflight, spec);
+  const alreadyOpen = findFeatureStateProof(preflight, spec, inspected.window);
   if (alreadyOpen) return alreadyOpenFeatureResult(chatName, inspected, feature, alreadyOpen);
 
   let action;
@@ -2431,7 +2624,7 @@ async function openFeature(api, inspected, chatName, feature, ocr, imageDimensio
         // This is the authoritative fresh pre-input state. Search is a
         // toggle, so it must win over the earlier preflight if it appeared in
         // the intervening moment.
-        const freshAlreadyOpen = findFeatureStateProof(state, spec);
+        const freshAlreadyOpen = findFeatureStateProof(state, spec, inspected.window);
         if (freshAlreadyOpen) return { skipInput: true, featureProof: freshAlreadyOpen };
         return findSearchNavigationTarget(state, inspected.window, imageDimensions);
       }, 'click', {}, { screenshot: true, guard, deliveryMode });
@@ -2469,6 +2662,7 @@ async function openFeature(api, inspected, chatName, feature, ocr, imageDimensio
         'LINE_FEATURE_UNAVAILABLE',
         menu.proof,
         ocr,
+        menu.window,
       ), 'click', {}, {
         screenshot: true,
         allowTargetClosedAfter: menu.target.window_id !== inspected.target.window_id,
@@ -2476,7 +2670,7 @@ async function openFeature(api, inspected, chatName, feature, ocr, imageDimensio
       });
     }
 
-    const outcome = await observeFeatureOutcome(api, inspected.target, priorWindows, spec, ocr);
+    const outcome = await observeFeatureOutcome(api, inspected.target, priorWindows, spec, ocr, inspected.window);
     const proof = findFeatureProof(
       beforeMain,
       outcome.mainState,
@@ -2484,6 +2678,7 @@ async function openFeature(api, inspected, chatName, feature, ocr, imageDimensio
       outcome.afterWindows,
       spec,
       outcome.childStates,
+      inspected.window,
     ) ?? await findFeatureOcrProof(beforeMain, outcome.mainState, spec, ocr);
     if (!proof) {
       throw new LineToolError(
@@ -2557,6 +2752,10 @@ function findExactButton(state, labels, description) {
  * snapshot-bound element route.
  */
 function findSearchNavigationTarget(state, window, imageDimensions) {
+  if (window?.title !== 'LINE') {
+    const toolbar = findDetachedHeaderToolbar(state, window);
+    return { pixel: mainHeaderToolbarScreenshotPoint(state, window, toolbar, toolbar.search, imageDimensions) };
+  }
   const bands = findMainChatBands(state);
   if (bands.length > 1) {
     throw new LineToolError('LINE_CONTROL_NOT_UNIQUE', 'LINE exposed more than one possible main-chat header band.', { candidateCount: bands.length });
@@ -2575,6 +2774,10 @@ function findSearchNavigationTarget(state, window, imageDimensions) {
 }
 
 function findMoreNavigationTarget(state, window, imageDimensions) {
+  if (window?.title !== 'LINE') {
+    const toolbar = findDetachedHeaderToolbar(state, window);
+    return { pixel: mainHeaderToolbarScreenshotPoint(state, window, toolbar, toolbar.more, imageDimensions) };
+  }
   const bands = findMainChatBands(state);
   if (bands.length > 1) {
     throw new LineToolError('LINE_CONTROL_NOT_UNIQUE', 'LINE exposed more than one possible main-chat header band.', { candidateCount: bands.length });
@@ -2639,6 +2842,57 @@ function findMainHeaderToolbar(state, bands = findMainChatBands(state)) {
   if (!header || headerIndex === undefined || !headerFrame) {
     throw new LineToolError('LINE_CONTROL_NOT_UNIQUE', 'LINE main-header toolbar did not have one structural header container.', { candidateCount: 0 });
   }
+  return findAnonymousHeaderToolbar(state, header, band);
+}
+
+/**
+ * Detached chats have an announcement strip between the title and the body,
+ * so the main-window adjacent-header/body rule cannot identify their title.
+ * Anchor the toolbar to the one top-level window root and one full-width,
+ * upper header containing the observed anonymous More control.
+ */
+function findDetachedHeaderToolbar(state, window) {
+  const expected = windowBoundsFrame(window);
+  const elements = Array.isArray(state?.elements) ? state.elements : [];
+  const byIndex = new Map(elements
+    .filter(element => elementIndex(element) !== undefined)
+    .map(element => [elementIndex(element), element]));
+  const roots = elements.filter(element => {
+    const frame = elementFrame(element);
+    return normalized(element?.role) === 'window' && frame && expected
+      && ['x', 'y', 'width', 'height'].every(key => Math.abs(frame[key] - expected[key]) <= 1);
+  });
+  if (roots.length !== 1) {
+    throw new LineToolError('LINE_CONTROL_NOT_UNIQUE', 'LINE detached window root was not unique.', { candidateCount: roots.length });
+  }
+  const root = roots[0];
+  const rootIndex = elementIndex(root);
+  const candidates = elements.filter(element => {
+    const frame = elementFrame(element);
+    const index = elementIndex(element);
+    if (normalized(element?.role) !== 'group' || !frame || index === undefined
+      || Math.abs(frame.x - expected.x) > 1 || Math.abs(frame.width - expected.width) > 1
+      || frame.y < expected.y || frame.y - expected.y > 96
+      || frame.height < 40 || frame.height > 64
+      || !rectInside(frame, expected)) return false;
+    const ancestors = ancestorChain(element, byIndex);
+    return ancestors.some(ancestor => elementIndex(ancestor) === rootIndex)
+      && elements.some(child => parentIndex(child) === index
+        && normalized(child?.role) === 'group'
+        && elementFrame(child)?.width === 16
+        && elementFrame(child)?.height === 24);
+  });
+  if (candidates.length !== 1) {
+    throw new LineToolError('LINE_CONTROL_NOT_UNIQUE', 'LINE detached chat header toolbar was not unique.', { candidateCount: candidates.length });
+  }
+  const header = candidates[0];
+  const headerFrame = elementFrame(header);
+  return findAnonymousHeaderToolbar(state, header, { pane: header, paneFrame: headerFrame });
+}
+
+function findAnonymousHeaderToolbar(state, header, band) {
+  const headerIndex = elementIndex(header);
+  const headerFrame = elementFrame(header);
   const children = (Array.isArray(state?.elements) ? state.elements : [])
     .filter(element => parentIndex(element) === headerIndex && normalized(element?.role) === 'group')
     .map(element => ({ element, frame: elementFrame(element) }))
@@ -2784,7 +3038,9 @@ async function findNewMenuSurface(api, priorWindows, labels, ocr) {
 }
 
 async function findNewMenuSurfaceOnce(api, priorWindows, labels, ocr) {
-  const known = new Set(priorWindows.map(windowIdentity));
+  // Qt can keep a popup HWND hidden and reveal it for the More menu. Its
+  // identity then predates the click, but its visible menu surface does not.
+  const known = new Set(priorWindows.filter(isVisibleLineWindow).map(windowIdentity));
   const windows = (await listLineWindows(api))
     .filter(window => isVisibleLineWindow(window) && !known.has(windowIdentity(window)));
   const candidates = [];
@@ -2799,22 +3055,22 @@ async function findNewMenuSurfaceOnce(api, priorWindows, labels, ocr) {
     const accessible = menuItemCandidates(state, labels);
     if (accessible.length > 1) continue;
     if (accessible.length === 1) {
-      candidates.push({ target, proof: undefined });
+      candidates.push({ target, window, proof: undefined });
       continue;
     }
-    const observation = await observeUniqueOcrLabel(state, labels, ocr);
-    if (observation?.match) candidates.push({ target, proof: observation });
+    const observation = await observeUniqueOcrLabel(state, labels, ocr, window);
+    if (observation?.match) candidates.push({ target, window, proof: observation });
   }
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
-async function observeFeatureOutcome(api, mainTarget, priorWindows, spec, ocr) {
+async function observeFeatureOutcome(api, mainTarget, priorWindows, spec, ocr, window) {
   // Reobserve the original main window because a popup-menu target commonly
   // closes immediately after its item is chosen.
   const mainState = await snapshot(api, mainTarget, { screenshot: true });
   let afterWindows = await listLineWindows(api);
   let childStates = await snapshotNewLineWindows(api, priorWindows, afterWindows);
-  if (!featureWindowProof(childStates, spec) && !findFeatureStateProof(mainState, spec)) {
+  if (!featureWindowProof(childStates, spec) && !findFeatureStateProof(mainState, spec, window)) {
     await new Promise(resolve => setTimeout(resolve, 250));
     afterWindows = await listLineWindows(api);
     childStates = await snapshotNewLineWindows(api, priorWindows, afterWindows);
@@ -2823,7 +3079,7 @@ async function observeFeatureOutcome(api, mainTarget, priorWindows, spec, ocr) {
 }
 
 async function snapshotNewLineWindows(api, priorWindows, afterWindows) {
-  const known = new Set(priorWindows.map(windowIdentity));
+  const known = new Set(priorWindows.filter(isVisibleLineWindow).map(windowIdentity));
   const states = [];
   for (const window of afterWindows) {
     if (!isVisibleLineWindow(window) || known.has(windowIdentity(window))) continue;
@@ -2843,7 +3099,7 @@ function featureWindowProof(childStates, spec) {
     || spec.labels.includes(child.window.title)).length === 1;
 }
 
-async function menuItemTarget(state, labels, description, code, priorProof, ocr) {
+async function menuItemTarget(state, labels, description, code, priorProof, ocr, window) {
   const accessible = menuItemCandidates(state, labels);
   if (accessible.length === 1) return { element: accessible[0] };
   if (accessible.length > 1) {
@@ -2857,7 +3113,7 @@ async function menuItemTarget(state, labels, description, code, priorProof, ocr)
     throw new LineToolError(code, `${description}: a fresh exact control was not available.`);
   }
 
-  const current = await observeUniqueOcrLabel(state, labels, ocr);
+  const current = await observeUniqueOcrLabel(state, labels, ocr, window);
   if (!current?.match || !sameOcrControl(priorProof.match, current.match)) {
     throw new LineToolError(
       code,
@@ -2880,8 +3136,8 @@ async function newlyVisibleOcrLabel(before, after, labels, ocr) {
   return afterObservation;
 }
 
-async function observeUniqueOcrLabel(state, labels, ocr) {
-  const recognized = await recognizeGroundedWindowImage(state, ocr);
+async function observeUniqueOcrLabel(state, labels, ocr, window) {
+  const recognized = await recognizeGroundedWindowImage(state, ocr, window);
   if (!recognized) return undefined;
   return { match: findUniqueOcrLabel(recognized, labels, ocr.findImageLabel) };
 }
@@ -2957,9 +3213,9 @@ function oneExactElement(candidates, description, code) {
   return candidates[0];
 }
 
-function findFeatureProof(before, after, priorWindows, afterWindows, spec, childStates = []) {
-  const afterProof = findFeatureStateProof(after, spec);
-  const beforeProof = findFeatureStateProof(before, spec);
+function findFeatureProof(before, after, priorWindows, afterWindows, spec, childStates = [], window) {
+  const afterProof = findFeatureStateProof(after, spec, window);
+  const beforeProof = findFeatureStateProof(before, spec, window);
   if (afterProof && !beforeProof) {
     return { ...afterProof, alreadyOpen: false };
   }
@@ -2967,7 +3223,7 @@ function findFeatureProof(before, after, priorWindows, afterWindows, spec, child
     return { ...afterProof, alreadyOpen: true };
   }
 
-  const previousIds = new Set(priorWindows.map(windowIdentity));
+  const previousIds = new Set(priorWindows.filter(isVisibleLineWindow).map(windowIdentity));
   const children = afterWindows.filter(window => !previousIds.has(windowIdentity(window))
     && isVisibleLineWindow(window)
     && spec.labels.includes(window.title));
@@ -2986,15 +3242,53 @@ function findFeatureProof(before, after, priorWindows, afterWindows, spec, child
   return undefined;
 }
 
-function findFeatureStateProof(state, spec) {
+function findFeatureStateProof(state, spec, window) {
   const surfaces = featureSurfaces(state, spec);
   if (surfaces.length === 1) {
     return { kind: 'exact-feature-surface', confidence: 'medium' };
   }
-  if (spec.kind === 'main-header-button' && findMainSearchBar(state)) {
-    return { kind: 'structural-main-chat-search-bar', confidence: 'medium' };
+  if (spec.kind === 'main-header-button') {
+    if (window?.title === 'LINE' && findMainSearchBar(state)) {
+      return { kind: 'structural-main-chat-search-bar', confidence: 'medium' };
+    }
+    if (window?.title !== 'LINE' && findDetachedSearchBar(state, window)) {
+      return { kind: 'structural-detached-chat-search-bar', confidence: 'medium' };
+    }
   }
   return undefined;
+}
+
+/** The detached chat's announcement strip separates its header and body. */
+function findDetachedSearchBar(state, window) {
+  const elements = Array.isArray(state?.elements) ? state.elements : [];
+  if (elements.some(element => hasMarker(element, MODAL_MARKERS))) return undefined;
+  let toolbar;
+  try {
+    toolbar = findDetachedHeaderToolbar(state, window);
+  } catch {
+    return undefined;
+  }
+  const header = toolbar.band.pane;
+  const headerFrame = toolbar.headerFrame;
+  const byIndex = new Map(elements
+    .filter(element => elementIndex(element) !== undefined)
+    .map(element => [elementIndex(element), element]));
+  const bodies = elements.filter(element => {
+    const frame = elementFrame(element);
+    return normalized(element?.role) === 'group'
+      && parentIndex(element) === parentIndex(header)
+      && frame
+      && Math.abs(frame.x - headerFrame.x) <= 1
+      && Math.abs(frame.width - headerFrame.width) <= 1
+      && frame.y >= headerFrame.y + headerFrame.height
+      && frame.y - (headerFrame.y + headerFrame.height) <= 24
+      && frame.height > headerFrame.height * 4;
+  });
+  if (bodies.length !== 1) return undefined;
+  const body = bodies[0];
+  const band = { bodyIndex: elementIndex(body), bodyFrame: elementFrame(body) };
+  const candidates = elements.filter(element => isMainSearchBarEdit(element, band, elements, byIndex));
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 /**
@@ -3515,3 +3809,6 @@ function withoutImages(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   return Object.fromEntries(Object.entries(value).filter(([key]) => !/image|screenshot/i.test(key)));
 }
+
+// Shared plain-text path reuses the existing UI selectors.
+export { inspectMainChat, inspectDetachedChat, createChatGuard, composerOptions, readComposer, writeDraft, runUiInput, findComposer, findMainChatBands, findContentHeaderContainer };

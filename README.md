@@ -8,7 +8,9 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[下載 v3.1.0](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.1.0) · [五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[v3.2.0 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+
+**v3.2.0 — 普通文字傳送與本機回執：** 指定聊天室與本人身分核對後，單次操作最多 30 秒，並查核新產生的本人本機訊息。`RECORDED_LOCAL` 不代表對方收到或已讀；結果不確定時以相同 `idempotencyKey` 唯讀重查，不自動重送。指定日期的讀取／搜尋／匯出／核對共用本機讀取器；未指定日期仍讀介面已載入歷史。Windows 擴充清單顯示 26 個工具，另有 5 個隱藏但仍可呼叫的舊別名。[詳見更新說明](docs/releases/v3.2.0.zh-TW.md)
 
 **v3.1.0 — 本機唯讀 CLI：** 新增 `line-cli`，可查能力與本機狀態，並依指定聊天室及日期讀取、匯出 JSON／TXT／CSV。每次只處理一頁，日期最多 31 天；不操作 GUI，也不發送訊息。 [CLI](docs/CLI.md) · [v3.1.0](docs/releases/v3.1.0.zh-TW.md)
 
@@ -17,13 +19,13 @@
 
 這是 **LINE Agent MCP**，由 [bensonmaxai](https://github.com/bensonmaxai/line-desktop-mcp) 維護的 Windows 社群版，建立在 [dtwang/line-desktop-mcp](https://github.com/dtwang/line-desktop-mcp) 之上。透過本機 MCP 連接已登入的 LINE Desktop，日常以 Codex 使用，也能搭配其他支援本機 MCP 的客戶端。本專案與 LINE 官方無關。
 
-Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後提供 **29 個工具**。未啟用時列出 **5 個工具**。名稱與輸入 schema 保留；macOS 也會列出這五個工具，但本版讀取／發送功能不可用。
+Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後列出 **26 個目前使用的工具**，另有 **5 個可呼叫但不列出的舊別名**。未啟用時列出 **5 個工具**。macOS 也列出五個預設工具，但讀取／發送功能不可用。
 
 **v3.0.0 安全更新：** Windows 所有指定聊天室的 GUI 操作（含預設五工具）都需要 CUA 與本機讀取器。先用不讀訊息的本機中繼資料核對唯一聊天室，再驗證已開啟的 LINE 標頭；不再自動點搜尋第一筆。macOS 讀取／發送目前會在自動化前拒絕。引用截圖限定指定聊天室、APNG 僅輸出首幀；GUI 歷史複製在沒有其他寫入者介入時恢復先前剪貼簿。[更新說明](docs/releases/v3.0.0.zh-TW.md) · [升級與回退](docs/MIGRATING.md#upgrading-to-v300)
 
 ## 可以做什麼
 
-| 工作 | v3.0.0 的能力 |
+| 工作 | 能力與界線 |
 | --- | --- |
 | 追蹤進度 | 從指定群組或個人對話的本機 DB/WAL 讀取文字與附件資訊；一次最多 31 天，可分頁追查 |
 | 看圖理解上下文 | 需要時才解碼快取圖片；回傳可供模型讀取的圖片區塊，縮圖與原圖、缺失與延後處理都有標示 |
@@ -44,7 +46,7 @@ Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後提供 **29 個工具**。未啟用時
 ## 安裝與升級
 
 ```powershell
-git clone --branch v3.1.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.2.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
@@ -60,7 +62,7 @@ npm ci --ignore-scripts
 
 本機讀取必須明確設定 `LINE_MCP_PYTHON` 與 `LINE_MCP_SQLITE3MC_DLL`；介面操作使用 `LINE_MCP_CUA_DRIVER`。伺服器啟動不會自行安裝依賴、讀取聊天或修改全域設定。完整步驟、固定 DLL 來源與 MCP 設定見[安裝指南](docs/quickstart-windows.md)。
 
-**v1.2.0／v2.0.0 使用者可沿同一個專案升級。** MCP 名稱、五個預設工具名稱與輸入 schema 保留，但 Windows GUI 操作新增必要依賴，`open_line_chat` 改為驗證已開啟的聊天室，macOS 讀取／發送不可用。保留舊目錄與設定、在新目錄安裝後切換啟動器，並重新連線、刷新工具 schema。LINE 帳號與聊天資料不需搬移。[完整升級與回退指南](docs/MIGRATING.md)
+**v1.2.0／v2.0.0 使用者可沿同一個專案升級。** MCP 名稱與五個預設工具名稱保留；Windows GUI 操作需要本機讀取器與 CUA，`open_line_chat` 會核對精確聊天室，必要時開啟並核驗有標題的視窗。macOS 讀取／發送不可用。保留舊目錄與設定、在新目錄安裝後切換啟動器，並重新連線、刷新工具 schema。LINE 帳號與聊天資料不需搬移。[完整升級與回退指南](docs/MIGRATING.md)
 
 本專案透過 GitHub 原始碼 tag 與 `.tgz` 發布，未發布至 npm registry，也未提供 MCPB。舊套件 `line-desktop-mcp@latest` 不會安裝本專案。
 
@@ -70,7 +72,7 @@ npm ci --ignore-scripts
 
 以下是 v2.0.0 時期同一台維護者電腦的量測，並非 v3.0.0 新基準。文字歷史的冷讀核心由 **17.866 秒降至 4.661 秒**；重啟驗收後，持續 MCP 連線的暖讀約 **0.732–0.803 秒**。圖片解碼、Codex 路由、模型處理及介面操作還會增加時間，這些數字不是所有電腦的速度保證。
 
-v2.0.0 時期的兩次實際 LINE 重啟後均成功讀取指定範圍；實際圖片已通過 MCP 傳輸、獨立解碼與雜湊核對。引用回覆、真實提及、投票與普通文字傳送有各自的實測紀錄，不能互相替代驗證。本次安全更新以合成回歸、原生 SQLite3MC 與 AHK 語法驗證；未重做實際聊天讀取或傳送。[詳細驗證範圍](docs/windows-extensions.md#verification)
+v2.0.0 時期的兩次實際 LINE 重啟後均成功讀取指定範圍；實際圖片已通過 MCP 傳輸、獨立解碼與雜湊核對。v3.2.0 已進行普通文字與本機紀錄的實機檢查；提及、引用、投票等豐富功能則是引導式視覺操作，並非自主 MCP 工具執行。各項實測不能互相替代，也不代表對方收到或已讀。[v3.2.0 驗證界線](docs/releases/v3.2.0.zh-TW.md)
 
 ```powershell
 npm test

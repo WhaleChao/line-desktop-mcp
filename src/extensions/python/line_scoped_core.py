@@ -17,7 +17,11 @@ class ReaderError(Exception):
 
 
 def validate_scope(args):
-    if not isinstance(args, dict) or set(args) - {'chatName', 'chatType', 'dateFrom', 'dateTo', 'messageLimit', 'query', 'cursor', 'mediaMode', 'mediaSourceRefs', 'identityOnly', 'guiIdentityOnly'}:
+    if not isinstance(args, dict) or set(args) - {'chatName', 'chatType', 'dateFrom', 'dateTo', 'messageLimit', 'query', 'cursor', 'mediaMode', 'mediaSourceRefs', 'identityOnly', 'guiIdentityOnly', 'guiCandidateOnly', 'groupCandidateOnly', 'expectedChatRef', 'requireUniqueName'}:
+        raise ReaderError('INVALID_SCOPE')
+    if 'requireUniqueName' in args and args['requireUniqueName'] is not True:
+        raise ReaderError('INVALID_SCOPE')
+    if 'expectedChatRef' in args and not re.fullmatch(r'chat:[0-9a-f]{24}', str(args['expectedChatRef'])):
         raise ReaderError('INVALID_SCOPE')
     chat = args.get('chatName')
     if not isinstance(chat, str) or not 1 <= len(chat) <= 200 or chat != chat.strip() or any(ord(c) < 32 for c in chat):
@@ -48,8 +52,23 @@ def validate_scope(args):
         raise ReaderError('INVALID_SCOPE')
     if 'guiIdentityOnly' in args and (args['guiIdentityOnly'] is not True
                                      or args.get('identityOnly') is not True
+                                      or 'guiCandidateOnly' in args or 'groupCandidateOnly' in args
                                      or mode != 'metadata'
                                      or any(key in args for key in ('query', 'cursor', 'mediaSourceRefs'))):
+        raise ReaderError('INVALID_SCOPE')
+    if 'guiCandidateOnly' in args and (args['guiCandidateOnly'] is not True
+                                      or args.get('identityOnly') is not True
+                                      or args.get('chatType', 'direct') != 'direct'
+                                      or 'groupCandidateOnly' in args
+                                      or mode != 'metadata'
+                                      or any(key in args for key in ('query', 'cursor', 'mediaSourceRefs'))):
+        raise ReaderError('INVALID_SCOPE')
+    if 'groupCandidateOnly' in args and (args['groupCandidateOnly'] is not True
+                                        or args.get('identityOnly') is not True
+                                        or args.get('chatType') != 'group'
+                                        or any(key in args for key in ('guiIdentityOnly', 'guiCandidateOnly'))
+                                        or mode != 'metadata'
+                                        or any(key in args for key in ('query', 'cursor', 'mediaSourceRefs'))):
         raise ReaderError('INVALID_SCOPE')
     if mode not in ('metadata', 'preview') or ('mediaSourceRefs' in args and (
             mode != 'preview' or not isinstance(refs, list) or not 1 <= len(refs) <= 20
@@ -220,16 +239,21 @@ GUI_INVENTORY_MAX_ROWS = 10000
 
 def gui_name_family(value):
     """Conservative approximation of names the LINE GUI may render alike."""
-    if (not isinstance(value, str) or not 1 <= len(value) <= 200
-            or any(ord(char) < 32 and not char.isspace() for char in value)):
-        raise ReaderError('GUI_IDENTITY_UNAVAILABLE')
+    if not isinstance(value, str):
+        raise ReaderError('GUI_IDENTITY_NAME_TYPE')
+    if not value:
+        raise ReaderError('GUI_IDENTITY_NAME_EMPTY')
+    if len(value) > 200:
+        raise ReaderError('GUI_IDENTITY_NAME_TOO_LONG')
+    if any(ord(char) < 32 and not char.isspace() for char in value):
+        raise ReaderError('GUI_IDENTITY_NAME_CONTROL')
     try:
         compact = ''.join(char for char in unicodedata.normalize('NFC', value)
                           if not char.isspace() and char != '\ufeff')
     except (TypeError, ValueError):
-        raise ReaderError('GUI_IDENTITY_UNAVAILABLE') from None
+        raise ReaderError('GUI_IDENTITY_NAME_NORMALIZATION') from None
     if not compact:
-        raise ReaderError('GUI_IDENTITY_UNAVAILABLE')
+        raise ReaderError('GUI_IDENTITY_NAME_EMPTY')
     while True:
         suffix = re.search(r'\([0-9]+\)$', compact)
         if suffix is None or suffix.start() == 0:
@@ -239,19 +263,26 @@ def gui_name_family(value):
 
 def _valid_gui_inventory_id(value):
     return (isinstance(value, str) and 1 <= len(value) <= 200
-            and not any(char.isspace() or char == '\ufeff' or ord(char) < 32 for char in value))
+            and not any(char.isspace() or char == '\ufeff' or unicodedata.category(char) == 'Cc'
+                        for char in value))
 
 
-def _gui_inventory(connection):
+def _gui_inventory(connection, *, allow_unknown_names=False, include_unopened_contacts=False):
     queries = (
         ('group', 'SELECT _chatMid, _chatName FROM _groupChat '
                   'ORDER BY _chatMid, _chatName LIMIT ? OFFSET ?'),
-        ('direct', 'SELECT c._mid, CASE '
-                   "WHEN c._displayNameOverridden IS NULL OR c._displayNameOverridden = '' "
-                   'THEN c._displayName ELSE c._displayNameOverridden END '
-                   'FROM _contact c JOIN _chat h ON h._id = c._mid '
-                   'WHERE h._midType = 0 '
-                   'ORDER BY c._mid, c._displayNameOverridden, c._displayName LIMIT ? OFFSET ?'),
+        ('direct', ('SELECT c._mid, CASE '
+                    "WHEN c._displayNameOverridden IS NULL OR c._displayNameOverridden = '' "
+                    'THEN c._displayName ELSE c._displayNameOverridden END '
+                    'FROM _contact c '
+                    'ORDER BY c._mid, c._displayNameOverridden, c._displayName LIMIT ? OFFSET ?')
+         if include_unopened_contacts else
+         ('SELECT h._id, CASE '
+          "WHEN c._displayNameOverridden IS NULL OR c._displayNameOverridden = '' "
+          'THEN c._displayName ELSE c._displayNameOverridden END '
+          'FROM _chat h LEFT JOIN _contact c ON h._id = c._mid '
+          'WHERE h._midType = 0 '
+          'ORDER BY h._id, c._displayNameOverridden, c._displayName LIMIT ? OFFSET ?')),
     )
     total = 0
     for kind, sql in queries:
@@ -259,20 +290,41 @@ def _gui_inventory(connection):
         while True:
             try:
                 rows = connection.execute(sql, (GUI_INVENTORY_PAGE, offset)).fetchall()
+            except ReaderError as error:
+                if error.code == 'RESULT_TOO_LARGE':
+                    raise ReaderError('GUI_IDENTITY_QUERY_RESULT_TOO_LARGE') from None
+                if error.code == 'DATABASE_READ_FAILED':
+                    raise ReaderError('GUI_IDENTITY_QUERY_DATABASE_READ_FAILED') from None
+                raise ReaderError('GUI_IDENTITY_QUERY_FAILED') from None
             except Exception:
-                raise ReaderError('GUI_IDENTITY_UNAVAILABLE') from None
+                raise ReaderError('GUI_IDENTITY_QUERY_FAILED') from None
             if not isinstance(rows, list) or len(rows) > GUI_INVENTORY_PAGE:
-                raise ReaderError('GUI_IDENTITY_UNAVAILABLE')
+                raise ReaderError('GUI_IDENTITY_ROW_INVALID')
             total += len(rows)
             if total > GUI_INVENTORY_MAX_ROWS:
-                raise ReaderError('GUI_IDENTITY_UNAVAILABLE')
+                raise ReaderError('GUI_IDENTITY_INVENTORY_LIMIT')
             for row in rows:
                 if not isinstance(row, (tuple, list)) or len(row) != 2:
-                    raise ReaderError('GUI_IDENTITY_UNAVAILABLE')
+                    raise ReaderError('GUI_IDENTITY_ROW_INVALID')
                 chat_id, name = row
                 if not _valid_gui_inventory_id(chat_id):
-                    raise ReaderError('GUI_IDENTITY_UNAVAILABLE')
-                gui_name_family(name)
+                    raise ReaderError('GUI_IDENTITY_ID_INVALID')
+                if name is None:
+                    if allow_unknown_names:
+                        yield kind, chat_id, None
+                        continue
+                    raise ReaderError('GUI_IDENTITY_GROUP_NAME_NULL'
+                                      if kind == 'group' else 'GUI_IDENTITY_DIRECT_NAME_NULL')
+                if allow_unknown_names and isinstance(name, str) and any(
+                        unicodedata.category(char) == 'Cc' for char in name):
+                    raise ReaderError('GUI_IDENTITY_NAME_CONTROL')
+                try:
+                    gui_name_family(name)
+                except ReaderError as error:
+                    if allow_unknown_names and error.code == 'GUI_IDENTITY_NAME_EMPTY':
+                        yield kind, chat_id, None
+                        continue
+                    raise
                 yield kind, chat_id, name
             if len(rows) < GUI_INVENTORY_PAGE:
                 break
@@ -280,15 +332,19 @@ def _gui_inventory(connection):
 
 
 def resolve_gui_chat(connection, args):
-    """Require one exact raw target and one identity in its whole GUI name family."""
+    """Require one exact target and no visually equivalent known chat name."""
     identities = {}
     families = {}
     exact = set()
-    for kind, chat_id, name in _gui_inventory(connection):
+    for kind, chat_id, name in _gui_inventory(connection, allow_unknown_names=True):
+        # A nameless unrelated entry cannot match the requested nonempty name.
+        # Never synthesize a name or use it as a candidate. UI proof is separate.
+        if name is None:
+            continue
         identity = (kind, chat_id)
         previous = identities.get(identity)
         if previous is not None and previous != name:
-            raise ReaderError('GUI_IDENTITY_UNAVAILABLE')
+            raise ReaderError('GUI_IDENTITY_CONFLICT')
         identities[identity] = name
         families.setdefault(gui_name_family(name), set()).add(identity)
         if name == args['chatName']:
@@ -305,20 +361,130 @@ def resolve_gui_chat(connection, args):
                      'uiIdentityVerified': False, 'guiDisplayNameUnique': True}
 
 
+def assert_unique_send_name(connection, args, chat_id, kind):
+    """A title alone cannot distinguish a chat from a same-name unopened contact."""
+    wanted = gui_name_family(args['chatName'])
+    target = (kind, chat_id)
+    matches = set()
+    for entry_kind, entry_id, name in _gui_inventory(
+            connection, allow_unknown_names=True, include_unopened_contacts=True):
+        if name is not None and gui_name_family(name) == wanted:
+            matches.add((entry_kind, entry_id))
+            if matches != {target}:
+                raise ReaderError('CHAT_AMBIGUOUS')
+    if matches != {target}:
+        raise ReaderError('CHAT_AMBIGUOUS')
+
+
+def resolve_gui_candidate_chat(connection, args):
+    """Find one direct target among known names; report, never hide, unknown names."""
+    if any(unicodedata.category(char) == 'Cc' for char in args['chatName']):
+        raise ReaderError('GUI_IDENTITY_NAME_CONTROL')
+    identities = {}
+    families = {}
+    exact = set()
+    unresolved = 0
+    for kind, chat_id, name in _gui_inventory(connection, allow_unknown_names=True):
+        identity = (kind, chat_id)
+        if identity in identities:
+            raise ReaderError('GUI_IDENTITY_CONFLICT')
+        identities[identity] = name
+        if name is None:
+            unresolved += 1
+            continue
+        families.setdefault(gui_name_family(name), set()).add(identity)
+        if name == args['chatName']:
+            exact.add(identity)
+    if not exact:
+        raise ReaderError('CHAT_NOT_FOUND')
+    if len(exact) != 1:
+        raise ReaderError('CHAT_AMBIGUOUS')
+    identity = next(iter(exact))
+    if identity[0] != 'direct' or families.get(gui_name_family(args['chatName'])) != {identity}:
+        raise ReaderError('CHAT_AMBIGUOUS')
+    return identity[1], {'kind': 'direct', 'displayName': args['chatName'],
+                          'uiIdentityVerified': False, 'guiDisplayNameUnique': False,
+                          'knownNameUnique': True, 'unresolvedNameCount': unresolved}
+
+
+def resolve_gui_group_candidate_chat(connection, args):
+    """One exact group name family; direct-name gaps cannot veto typed group UI proof."""
+    wanted = gui_name_family(args['chatName'])
+    exact, family = set(), set()
+    seen = {}
+    offset = 0
+    while True:
+        rows = connection.execute(
+            'SELECT _chatMid, _chatName FROM _groupChat '
+            'ORDER BY _chatMid, _chatName LIMIT ? OFFSET ?',
+            (GUI_INVENTORY_PAGE, offset)).fetchall()
+        if not isinstance(rows, list) or len(rows) > GUI_INVENTORY_PAGE:
+            raise ReaderError('GUI_IDENTITY_ROW_INVALID')
+        offset += len(rows)
+        if offset > GUI_INVENTORY_MAX_ROWS:
+            raise ReaderError('GUI_IDENTITY_INVENTORY_LIMIT')
+        for row in rows:
+            if not isinstance(row, (tuple, list)) or len(row) != 2:
+                raise ReaderError('GUI_IDENTITY_ROW_INVALID')
+            group_id, name = row
+            if not _valid_gui_inventory_id(group_id):
+                raise ReaderError('GUI_IDENTITY_ID_INVALID')
+            if name is None:
+                raise ReaderError('GUI_IDENTITY_GROUP_NAME_NULL')
+            family_name = gui_name_family(name)
+            if group_id in seen and seen[group_id] != name:
+                raise ReaderError('GUI_IDENTITY_CONFLICT')
+            seen[group_id] = name
+            if family_name == wanted:
+                family.add(group_id)
+            if name == args['chatName']:
+                exact.add(group_id)
+        if len(rows) < GUI_INVENTORY_PAGE:
+            break
+    if not exact:
+        raise ReaderError('CHAT_NOT_FOUND')
+    if len(exact) != 1 or family != exact:
+        raise ReaderError('CHAT_AMBIGUOUS')
+    return next(iter(exact)), {'kind': 'group', 'displayName': args['chatName'],
+                              'uiIdentityVerified': False, 'guiDisplayNameUnique': False,
+                              'knownNameUnique': True}
+
+
+def own_sender_ref(connection):
+    """Return a self reference only when the local profile has one valid MID."""
+    rows = connection.execute('SELECT _mid FROM _profile LIMIT 2').fetchall()
+    if len(rows) != 1 or not isinstance(rows[0], (tuple, list)) or len(rows[0]) != 1:
+        return None
+    mid = rows[0][0]
+    return reference('sender', mid) if _valid_gui_inventory_id(mid) else None
+
+
 def read_scoped(connection, args, snapshot, media_resolver=None, *,
                 message_budget_bytes=3*1024*1024, preview_budget_bytes=1024*1024, media_item_limit=20):
     """connection.execute(sql, parameters).fetchall(); only fixed, scoped SQL."""
     args, start, end = validate_scope(args)
     gui_identity_only = args.get('guiIdentityOnly') is True
-    chat_id, chat_identity = (resolve_gui_chat(connection, args) if gui_identity_only
-                              else resolve_chat(connection, args))
+    gui_candidate_only = args.get('guiCandidateOnly') is True
+    group_candidate_only = args.get('groupCandidateOnly') is True
+    chat_id, chat_identity = (resolve_gui_group_candidate_chat(connection, args) if group_candidate_only
+                              else resolve_gui_candidate_chat(connection, args) if gui_candidate_only
+                              else resolve_gui_chat(connection, args) if gui_identity_only
+                              else resolve_chat(connection, {**args, 'chatType': 'auto'} if args.get('requireUniqueName') else args))
+    if args.get('requireUniqueName') and args.get('chatType', 'auto') not in ('auto', chat_identity['kind']):
+        raise ReaderError('CHAT_TYPE_MISMATCH')
+    if args.get('requireUniqueName') or gui_identity_only:
+        assert_unique_send_name(connection, args, chat_id, chat_identity['kind'])
     chat_ref = reference('chat', chat_id)
+    if args.get('expectedChatRef') is not None and args['expectedChatRef'] != chat_ref:
+        raise ReaderError('CHAT_IDENTITY_CHANGED')
     if args.get('identityOnly') is True:
         return {'ok': True, 'chatName': args['chatName'], 'chatRef': chat_ref,
                 'chatIdentity': chat_identity, 'count': 0, 'messages': [],
                 'pagination': {'hasMore': False, 'nextCursor': None},
                 'retrievedAt': dt.datetime.now(TZ).isoformat(),
-                'scope': {'kind': 'local_gui_chat_identity' if gui_identity_only else 'local_chat_identity',
+                'scope': {'kind': 'local_gui_group_candidate_identity' if group_candidate_only else
+                          'local_gui_candidate_identity' if gui_candidate_only else
+                          'local_gui_chat_identity' if gui_identity_only else 'local_chat_identity',
                           'requested': args, 'timezone': 'Asia/Taipei',
                           'totalHistoryKnown': False, 'truncated': False, 'snapshot': snapshot},
                 'warnings': ['Identity lookup only; no message records or media were read.']}
@@ -446,6 +612,7 @@ def read_scoped(connection, args, snapshot, media_resolver=None, *,
     next_cursor = encode_cursor(args, chat_ref, messages[0], cursor_ids[messages[0]['sourceRef']]) if truncated and messages else None
     return {
         'ok': True, 'chatName': args['chatName'], 'chatRef': chat_ref, 'chatIdentity': chat_identity,
+        'ownSenderRef': own_sender_ref(connection),
         'count': len(messages), 'messages': messages,
         'pagination': {'hasMore': truncated, 'nextCursor': next_cursor,
                        'limitedBy': limited_by, 'order': 'newest_pages_with_chronological_messages',

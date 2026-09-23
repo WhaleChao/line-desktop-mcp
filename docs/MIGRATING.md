@@ -1,14 +1,53 @@
-# Upgrade to v3.1.0
+# Upgrade to v3.2.0
 
 [Project home](../README.md) · [Windows installation](quickstart-windows.md) · [Features](features.md)
 
-LINE Agent MCP v3.1.0 continues the same
+LINE Agent MCP v3.2.0 continues the same
 [bensonmaxai/line-desktop-mcp](https://github.com/bensonmaxai/line-desktop-mcp)
-repository, package name, and MCP server name: **line-desktop-mcp**. It is
-published from the existing GitHub repository under tag v3.1.0, not to the npm
-registry and not as an MCPB bundle. LINE account and chat data do not migrate.
+repository, package name, and MCP server name: **line-desktop-mcp**. The
+release uses the existing GitHub repository; it is not published to
+the npm registry or as an MCPB bundle. LINE account and chat data do not migrate.
 The reader still uses bounded, read-only local copies; it is not an account
 backup or a migration tool.
+
+## Upgrading to v3.2.0
+
+Install the `v3.2.0` source or release archive in a sibling directory,
+run `npm ci --ignore-scripts`, then reconnect the MCP client to
+refresh its descriptors. Keep the previous directory, launcher, and
+configuration for rollback. Do not copy LINE account files, keys, or cache.
+The optional read-only `line-cli` remains available; check
+`node src/cli.js --version` and `node src/cli.js capabilities --json`.
+
+With `LINE_MCP_EXTENSIONS=1` on Windows, expect 26 listed active tools. Five
+legacy aliases remain callable for existing clients but are hidden from the
+list; 31 descriptors are implemented. The default five tool names remain.
+Update clients that depend on an exact extension list or cached schemas.
+
+Plain-text `send_message_auto` now checks for a new own local record in the
+exact chat within one 30-second deadline. `RECORDED_LOCAL` establishes only
+local record presence, not delivery or read state. Retain the same
+`idempotencyKey` when checking an uncertain attempt; it will not dispatch
+again. Without a key, identical chat and text reuse the recorded result.
+Use a new key only when a second send is intentional. Never automatically
+retry an uncertain send. Contact-name collisions now refuse even if one
+candidate lacks a chat row, and identity is refreshed immediately before
+Return.
+
+For `get_line_chat_messages`, search, export, and verify, an explicit
+`date` or complete `dateFrom`/`dateTo` range (at most 31 days) now uses
+the scoped local DB/WAL reader. Undated requests continue to use loaded UI
+history. `compareWithUi: true` is a separate GUI comparison; it may mark
+the chat read and does not turn local records into delivery evidence.
+Detached chat windows and file pickers require exact HWND/PID/title binding.
+`send_file_manual` stages a path in the Ctrl+O picker only; clicking Open
+after approval sends the file.
+
+The v3.0.0 CUA, Python, pinned SQLite3MC, exact-chat and macOS refusal
+requirements still apply to GUI operations. If rolling back, stop the active
+bridge, wait for its operation lock to release, retarget the previous launcher,
+and reconnect. Keep any uncertain send journal until its outcome is resolved;
+rolling back does not justify replaying it.
 
 ## Upgrading to v3.1.0
 
@@ -206,8 +245,8 @@ path or automatically replay an uncertain action.
 
 After reconnecting, start with get_line_capabilities({}), which does not read a
 chat, inspect media, operate LINE, or send anything. With Windows extensions
-enabled, expect toolCount: 29. get_line_status({}) is also chat-free, but does
-not prove full reader or GUI readiness.
+enabled, v3.2.0 reports `toolCount: 26`; v3.0.1 reported 29. `get_line_status({})`
+is also chat-free, but does not prove full reader or GUI readiness.
 
 For synthetic local verification from the v3 checkout:
 

@@ -8,7 +8,9 @@
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[ดาวน์โหลด v3.1.0](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.1.0) · [บันทึกการอัปเดต](releases/v3.1.0.th.md) · [การติดตั้ง](quickstart-windows.md) · [อัปเกรดเป็น v3.1.0](MIGRATING.md#upgrading-to-v310) · [ข้อกำหนดทางเทคนิค](windows-extensions.md)
+[บันทึกการอัปเดต v3.2.0](releases/v3.2.0.th.md) · [การติดตั้ง](quickstart-windows.md) · [อัปเกรดเป็น v3.2.0](MIGRATING.md#upgrading-to-v320) · [ข้อกำหนดทางเทคนิค](windows-extensions.md)
+
+**v3.2.0 — การส่งข้อความและบันทึกในเครื่อง:** ตรวจแชตและตัวตนผู้ส่งอย่างตรงกัน แล้วตรวจข้อความใหม่ของตนภายในเวลา 30 วินาที `RECORDED_LOCAL` ไม่ได้พิสูจน์ว่าผู้รับได้รับหรืออ่านแล้ว ผลที่ไม่แน่นอนตรวจซ้ำแบบอ่านอย่างเดียวด้วย `idempotencyKey` เดิม โดยไม่ส่งซ้ำอัตโนมัติ คำสั่ง MCP ที่ระบุวันที่ใช้ตัวอ่านในเครื่องร่วมกัน ส่วนคำสั่งเดิมที่ไม่ระบุวันที่ใช้ประวัติ UI [รายละเอียด](releases/v3.2.0.th.md)
 
 **v3.1.0 — CLI อ่านข้อมูลในเครื่องเท่านั้น：** เพิ่ม `line-cli` สำหรับดูความสามารถ สถานะในเครื่อง อ่านแชตตามชื่อและวันที่ และส่งออก JSON/TXT/CSV แต่ละครั้งคืนข้อมูลหนึ่งหน้า ช่วงวันที่ไม่เกิน 31 วัน ไม่มีการควบคุม GUI หรือส่งข้อความ [CLI](CLI.md) · [v3.1.0](releases/v3.1.0.th.md)
 
@@ -17,7 +19,7 @@
 
 **LINE Agent MCP** คือรุ่นชุมชนสำหรับ Windows ที่ดูแลโดย [bensonmaxai](https://github.com/bensonmaxai/line-desktop-mcp) และพัฒนาต่อยอดจาก [โครงการต้นฉบับของ Geoffrey Wang](https://github.com/dtwang/line-desktop-mcp) โครงการนี้เชื่อม MCP client ภายในเครื่องกับ LINE Desktop ที่ลงชื่อเข้าใช้แล้ว ใช้ Codex เป็น client ประจำได้ และ local MCP client อื่นก็เชื่อมต่อได้เช่นกัน โครงการนี้ไม่มีความเกี่ยวข้องกับ LINE อย่างเป็นทางการ
 
-บน Windows ให้ตั้งค่า `LINE_MCP_EXTENSIONS=1` เพื่อใช้ **29 tools** หากไม่ตั้งค่านี้ จะคง **5 tools ค่าเริ่มต้น** เป็น descriptors ไว้ โดยชื่อ ลำดับ และ input schema ไม่เปลี่ยน macOS ก็แสดงทั้ง 5 ชื่อนี้เช่นกัน แต่รีลีสนี้ไม่รองรับการอ่าน การส่ง หรือการทำงานกับไฟล์
+บน Windows ให้ตั้งค่า `LINE_MCP_EXTENSIONS=1` เพื่อแสดง **26 tools ที่ใช้งาน** และยังเรียก alias เดิม 5 ตัวที่ซ่อนจากรายการได้ หากไม่ตั้งค่านี้ จะแสดง **5 tools ค่าเริ่มต้น** macOS ก็แสดงทั้ง 5 ชื่อนี้เช่นกัน แต่รีลีสนี้ไม่รองรับการอ่าน การส่ง หรือการทำงานกับไฟล์
 
 **รุ่นความปลอดภัย v3.0.0 (12 กันยายน 2026):** เส้นทาง GUI บน Windows ทุกเส้นทางสำหรับแชตที่ระบุชื่อ รวมทั้ง 5 tools ค่าเริ่มต้น ต้องใช้ CUA และ local reader ที่กำหนดค่าไว้ การตรวจสอบ metadata แบบส่วนตัวจะไม่อ่านข้อความหรือสื่อ ยืนยันได้เพียงกลุ่มหรือ direct chat เดิมที่มีชื่อไม่ซ้ำ แล้วตรวจสอบส่วนหัว LINE ใหม่ของแชตที่ได้รับอนุญาตซึ่งผู้ใช้หรือ UI แบบมีผู้ใช้กำกับเปิดไว้ก่อน `open_line_chat` ใช้เพื่อตรวจสอบเท่านั้น และจะไม่เปิดผลการค้นหารายการแรกโดยอัตโนมัติ macOS ยังคงมี 5 descriptors แต่การอ่านแชต การส่ง และไฟล์จะถูกปฏิเสธด้วย `LINE_CHAT_VERIFICATION_UNAVAILABLE` จึงไม่มีการรองรับการใช้งานจริงบน macOS [ขั้นตอนอัปเกรด](MIGRATING.md#upgrading-to-v300)
 
@@ -38,17 +40,17 @@
 
 ร่างข้อความธรรมดาจะได้รับการตรวจทานใน Codex เอเจนต์ทำการตรวจสอบ UI ด้วยภาพ แต่การ mention จริงและการเปลี่ยนแปลงเนื้อหาที่แชร์ยังต้องใช้เวิร์กโฟลว์และการอนุมัติของแต่ละงาน แผนงานไม่ใช่หลักฐานว่าการกระทำเกิดขึ้นแล้ว
 
-## การติดตั้งและอัปเกรดเป็น v3.1.0
+## การติดตั้งและอัปเกรดเป็น v3.2.0
 
-หากต้องการใช้ไดเรกทอรีทำงานแยกต่างหาก ให้รับ repository เดิมที่ tag v3.1.0:
+ให้รับ repository เดิมที่ tag v3.2.0 ลงในไดเรกทอรีแยก:
 
 ```powershell
-git clone --branch v3.1.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.2.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
 
-หากย้ายจาก `line-desktop-mcp` v1.2.0 หรือ v2.0.0 ที่มีอยู่ ให้สำรองการตั้งค่า MCP client ปัจจุบันก่อน รับ v3.1.0 ลงในไดเรกทอรี source ใหม่ที่วางคู่กันด้วยคำสั่งข้างต้น แล้วชี้ MCP registration เดิมไปยังไดเรกทอรีใหม่นั้น เก็บ checkout, launcher และการตั้งค่าเดิมไว้สำหรับ rollback บัญชี LINE และข้อมูลแชตไม่ต้องย้าย
+หากย้ายจาก `line-desktop-mcp` รุ่นก่อน ให้สำรองการตั้งค่า MCP client ปัจจุบันก่อน รับ v3.2.0 ลงในไดเรกทอรี source ใหม่ที่วางคู่กันด้วยคำสั่งข้างต้น แล้วชี้ MCP registration เดิมไปยังไดเรกทอรีใหม่นั้น เก็บ checkout, launcher และการตั้งค่าเดิมไว้สำหรับ rollback บัญชี LINE และข้อมูลแชตไม่ต้องย้าย
 
 ใช้ Node.js 24 LTS ขึ้นไป (ทดสอบแล้ว: 24.19.0) และส่วนประกอบ runtime ที่ตั้งค่าแยกต่างหากตาม tools ที่ต้องใช้ การอ่านในเครื่องต้องใช้ Windows x64, Python x64, `cryptography` และ Pillow, SQLite3MC DLL ที่ตรึงไว้ และ `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` ที่ระบุอย่างชัดเจน ต้องมี Python packages ทั้งสองสำหรับ local read ทุกแบบ รวมถึง metadata mode ใน v3.1.0 การทำงาน GUI กับแชตที่ระบุชื่อบน Windows รวมทั้ง 5 tools เดิม ต้องใช้สิ่งเหล่านี้และ `LINE_MCP_CUA_DRIVER` ด้วย ผู้ใช้หรือ UI แบบมีผู้ใช้กำกับต้องเปิดแชตที่ได้รับอนุญาตก่อน `open_line_chat` จะไม่ค้นหาให้อัตโนมัติ ชื่อที่แสดงแบบดิบต้องตรงทุกตัวอักษร และกรณี NFC เทียบเท่า การยุบ/ตัดช่องว่าง หรือรูปแบบชนกันจากจำนวนสมาชิกจะ fail closed เครื่องมือ UI ใช้ AutoHotkey v2 และ Windows OCR ภายในเครื่องเมื่อจำเป็น ดูรายละเอียดใน[คู่มือการติดตั้ง](quickstart-windows.md)
 
@@ -58,7 +60,7 @@ LINE Agent MCP เป็นชื่อที่ใช้แสดงของ�
 
 รุ่นนี้ทำงานผ่าน local stdio เท่านั้น ไม่มี HTTP/REST server หรือบริการ cloud แบบมีค่าใช้จ่าย และจะไม่โหลด `.env` ใน current working directory โดยอัตโนมัติ การตั้งค่ามาจาก environment variables ที่ MCP client ส่งมาอย่างชัดเจน
 
-ใช้ `line-desktop-mcp-3.1.0.tgz` และ `SHA256SUMS.txt` จาก GitHub release v3.1.0 โครงการนี้ไม่ได้เผยแพร่บน npm registry และไม่มี MCPB bundle แพ็กเกจเก่า `line-desktop-mcp@latest` จะไม่ติดตั้งรุ่นนี้
+ใช้ `line-desktop-mcp-3.2.0.tgz` และ `SHA256SUMS.txt` จาก GitHub release v3.2.0 โครงการนี้ไม่ได้เผยแพร่บน npm registry และไม่มี MCPB bundle แพ็กเกจเก่า `line-desktop-mcp@latest` จะไม่ติดตั้งรุ่นนี้
 
 ## หลักฐานและขอบเขต
 

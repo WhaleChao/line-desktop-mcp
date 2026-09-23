@@ -1,5 +1,55 @@
 # Changelog
 
+## 3.2.0 — 2026-09-23 (Asia/Taipei)
+
+**Bounded Windows workflows and local receipt checks.** This release retains
+the read-only `line-cli` and the v3 named-chat safety requirements. Distribution
+uses a GitHub source tag and attached `.tgz`, without npm-registry or MCPB
+publication.
+
+- Plain-text `send_message_auto` now binds the exact named chat and local
+  sender identity, uses a 30-second operation deadline (25 seconds for input,
+  five reserved for the local receipt), and checks for a new own message in
+  the scoped local DB/WAL. `RECORDED_LOCAL` means a matching local record
+  was found. It does not establish recipient delivery or read state.
+- Contact-name collisions now refuse even when a competing contact has no
+  chat row. Plain-text send refreshes identity immediately before Return.
+- A persistent idempotency journal prevents automatic repeat dispatch. Reuse
+  the same `idempotencyKey` to inspect an uncertain attempt; without a key,
+  identical chat/text reuses its recorded result. A deliberate second send
+  requires a new key. An uncertain retry performs a read-only receipt check.
+- Dated `get_line_chat_messages`, search, export, and verify requests use
+  the shared scoped local reader for one explicit date or complete
+  `dateFrom`/`dateTo` range of at most 31 days. Undated legacy requests
+  retain loaded-history UI behavior. `compareWithUi: true` performs a
+  separate, bounded UI comparison and can mark the chat read.
+- Detached chat and file-picker handling binds the exact window handle,
+  process ID, and title. `send_file_manual` opens the picker with Ctrl+O
+  and stages the chosen path only; clicking Open is the actual send action.
+- Windows extensions advertise 26 active tools. Five legacy aliases remain
+  callable but are hidden from the list, leaving 31 implemented descriptors.
+  Tool results are compact, and Ajv is loaded only when extensions run.
+
+Live MCP checks covered dated read, search, and verify at about 0.6 seconds
+each in the observed run, plus TXT/JSON/CSV exports with one verified record
+each. These are observations, not general speed guarantees. Guided visual
+checks covered direct/group text with local receipts, a real
+blue mention, quoted reply, forwarding, recall, synthetic TXT/PNG attachment
+staging and media readback, polls, notes, albums, reactions, notification and
+window toggles, sticker-panel opening, and capture-panel cancellation. These
+rich-feature checks were guided UI actions, **not autonomous MCP executions**.
+Guided UI copy and English translation checks passed; direct MCP targeting
+of custom-drawn text can still refuse. Guided Files, Media, and Links UI
+navigation passed; the MCP Files feature entry opens the More menu but cannot
+locate Files and returns `LINE_FEATURE_UNAVAILABLE`. Chat-list pinning was
+tested off/on/off and restored. A downloaded TXT file matched the original
+SHA-256 exactly. Live `get_line_draft` read empty direct/group composers after
+Search/open in about 2.3 seconds in the observed checks. Final synthetic
+checks: 280/280 Node tests; 127 Python tests passed and one Windows symlink
+privilege test skipped (128 run). No delivery/read receipt is claimed. See
+[release notes](docs/releases/README.md), [upgrade instructions](docs/MIGRATING.md#upgrading-to-v320),
+and [CLI](docs/CLI.md).
+
 ## 3.1.0 — 2026-09-22 (Asia/Taipei)
 
 **Add a bounded, read-only local CLI.** GitHub tag and `.tgz` release;

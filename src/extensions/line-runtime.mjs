@@ -72,7 +72,7 @@ export function requireChoice(value, name, choices) {
 }
 
 export function toolResult(value, images = []) {
-  return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }, ...images] };
+  return { content: [{ type: 'text', text: JSON.stringify(value) }, ...images] };
 }
 
 export function toolError(error) {

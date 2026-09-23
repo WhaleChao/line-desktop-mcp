@@ -298,7 +298,7 @@ test('human output escapes terminal and directional controls after reader valida
     code: 0,
     stdout: JSON.stringify({
       ok: true, chatName: scope.chatName, chatRef: `chat:${'a'.repeat(24)}`,
-      chatIdentity: { kind: 'group', displayName: scope.chatName, uiIdentityVerified: false },
+      chatIdentity: { kind: 'group', displayName: scope.chatName, uiIdentityVerified: false }, ownSenderRef: null,
       count: 1, scope: { kind: 'local_database', requested: scope, truncated: false },
       freshness: { sourceStable: true }, warnings: [],
       messages: [{ sourceRef: `message:${'b'.repeat(24)}`, sourceMessageId: 'synthetic',

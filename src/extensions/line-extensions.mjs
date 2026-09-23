@@ -14,7 +14,7 @@ import { LineToolError, requireChat, requireText, runtimeRequire, toolResult, to
 import { validateExportPath, writeVerifiedExport } from './line-export.mjs';
 export { validateExportPath } from './line-export.mjs';
 
-export const EXTENSION_VERSION = '3.1.0';
+export const EXTENSION_VERSION = runtimeRequire()('./package.json').version;
 const MAX_MEDIA_PREVIEW_BYTES = 256 * 1024;
 // Match the reader's validated original-image contract. The 2048-pixel
 // normalization applies only to derived previews, not small original PNG/JPEG.
@@ -26,6 +26,31 @@ const draft = { type: 'string', maxLength: 10000 };
 const isoDate = { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' };
 const chatType = { type: 'string', enum: ['auto', 'group', 'direct'], default: 'auto' };
 const sourceToken = { type: 'string', minLength: 1, maxLength: 256 };
+const nullableObservationText = {type:['string','null'],maxLength:10000};
+const directObservation = {type:'object',additionalProperties:false,
+  properties:{header:{type:['string','null'],maxLength:240},
+    chatResultCount:{type:['integer','null'],minimum:0,maximum:10000},
+    resultTitles:{type:'array',maxItems:30,items:{type:'string',maxLength:240}},
+    messages:{type:'array',maxItems:30,items:{type:'object',additionalProperties:false,
+      properties:{kind:{type:'string',enum:['text','file'],description:'When either newest message is a file, required for every visible message. Otherwise omitted means text only.'},
+        text:nullableObservationText,dateLabel:{type:['string','null'],maxLength:80},
+        time:{type:['string','null'],maxLength:20},direction:{type:'string',enum:['incoming','outgoing','unknown']}},
+      required:['text','dateLabel','time','direction']}},
+    confidence:{type:'string',enum:['high','low']}},
+  required:['header','chatResultCount','resultTitles','messages','confidence']};
+const groupObservation = {type:'object',additionalProperties:false,
+  properties:{headerTitle:{type:['string','null'],maxLength:240},
+    memberCount:{type:['integer','null'],minimum:1,maximum:100000},
+    chatResultCount:{type:['integer','null'],minimum:0,maximum:10000},
+    resultTitles:{type:'array',maxItems:30,items:{type:'string',maxLength:240}},
+    entries:{type:'array',maxItems:30,items:{type:'object',additionalProperties:false,
+      properties:{kind:{type:'string',enum:['text','nontext']},text:{type:'string',maxLength:12000},
+        senderName:{type:['string','null'],maxLength:200},dateLabel:{type:['string','null'],maxLength:80},
+        time:{type:['string','null'],maxLength:20},direction:{type:'string',enum:['incoming','outgoing','unknown']}},
+      required:['kind','text','senderName','dateLabel','time','direction']}},
+    confidence:{type:'string',enum:['high','medium','low']}},
+  required:['headerTitle','memberCount','chatResultCount','resultTitles','entries','confidence']};
+const textChatType = {type:'string',enum:['direct','group'],default:'direct'};
 const replySource = { type: 'object', additionalProperties: false,
   properties: { sourceRef: { type: 'string', pattern: '^message:[0-9a-f]{24}$' }, text,
     sender: { type: 'string', minLength: 1, maxLength: 200 }, date: isoDate,
@@ -52,6 +77,16 @@ function descriptor(name, description, properties, required = [], annotations = 
 }
 
 export const LINE_TOOL_DESCRIPTORS = [
+  descriptor('prepare_line_direct_chat', 'Prepare one exact authorized direct chat using bounded search, header and recent incoming text or file evidence. At verify, put each visible file\'s complete filename in text and mark it kind:file. If either newest message is a file, mark kind:text or kind:file on every visible message; a missing kind refuses. With text-only context, omitted kind means text. Do not use clipped filenames or guessed values. Search may focus LINE and opening may mark it read. Pass only observations from each returned image. One-use tokens and fresh local/pixel checks bind every phase. Never stages or sends; final exact-text user approval remains separate. Receipt is read-only and available only after an acknowledged send in this process.', {
+    chatName:chat,stage:{type:'string',enum:['search','open','context','verify','receipt']},
+    dateFrom:isoDate,dateTo:isoDate,messageLimit:{type:'integer',minimum:2,maximum:30},
+    token:sourceToken,observation:directObservation,
+  }, ['chatName','stage'], uiOnly),
+  descriptor('prepare_line_group_chat', 'Prepare one exact authorized group using bounded search, a visible group member-count header, and ordered recent text/nontext evidence. Never skip a latest nontext record. One-use tokens and fresh local/pixel checks bind every phase. This tool never stages or sends; final exact-text approval remains in the caller panel.', {
+    chatName:chat,stage:{type:'string',enum:['search','open','context','verify','receipt']},
+    dateFrom:isoDate,dateTo:isoDate,messageLimit:{type:'integer',minimum:2,maximum:30},
+    token:sourceToken,observation:groupObservation,
+  }, ['chatName','stage'], uiOnly),
   descriptor('get_line_local_messages', 'Read one exact authorized group or direct chat from bounded local DB/WAL copies, at most 31 days. Default local-only metadata mode reads text and attachment metadata without GUI or media decoding. Returns snapshot freshness, source refs and a nextCursor for older pages. Reuse cursor only with the same chat/date/query; each page uses a new snapshot. Request mediaMode:preview, optionally with mediaSourceRefs from that page, to decode cached supported images or validated WAV audio within a response budget. Missing/deferred/rejected media is explicit. compareWithUi:true adds ONE short GUI read (may focus LINE and mark read), with bidirectional differences and scope/timing caveats; never action identity or delivery proof. No automatic GUI fallback or retry.', {
     chatName: chat, dateFrom: isoDate, dateTo: isoDate,
     chatType: { type: 'string', enum: ['auto', 'group', 'direct'], default: 'auto', description: 'Exact effective name lookup across groups and existing direct contacts. Same-name collisions refuse; select a kind only when authorized. Keep unchanged when paging.' },
@@ -67,8 +102,8 @@ export const LINE_TOOL_DESCRIPTORS = [
   ...['short', 'default', 'long'].map(size => descriptor(`get_line_chatroom_history_${size}`,
     `Read ${size} bounded history from one named LINE chat. Enforces an explicit date and messageLimit after parsing. Without date returns recent loaded messages across dates. Reports incomplete/unknown parsing; not a complete archive. Opening a chat can mark it read.`,
     { chatName: chat, date: isoDate, messageLimit: bounds.messageLimit }, ['chatName'], uiOnly)),
-  descriptor('send_message_manual', 'Stage literal text for review inside LINE only when the user requests in-LINE staging. For ordinary replies first show the draft in Codex. Never sends; a staged acknowledgment still needs visual review.', { chatName: chat, message: text }, ['chatName', 'message'], uiOnly),
-  descriptor('send_message_auto', 'Send literal plain text immediately only after user approval of the exact Codex-visible destination and draft. Read the named recent context first unless expressly waived. Plain @Name is NOT a real mention. A dispatch acknowledgment is NOT proof of delivery; verify important sends.', { chatName: chat, message: text }, ['chatName', 'message'], uiOnly),
+  descriptor('send_message_manual', 'Stage literal text for review inside LINE only when the user requests in-LINE staging. For ordinary replies first show the draft in Codex. Never sends; a staged acknowledgment still needs visual review.', { chatName: chat, message: text, chatType:textChatType }, ['chatName', 'message'], uiOnly),
+  descriptor('send_message_auto', 'Send approved plain text once and verify a new own local DB record in this call; no prepare or separate receipt call needed. RECORDED_LOCAL is local proof, not recipient delivery/read proof. UNCERTAIN retries only check the earlier operation. Reuse idempotencyKey for retries; without a key, identical text reuses its recorded result. A new intended repeat needs a new key. May open a titled chat window and focus LINE.', { chatName: chat, message: text, chatType:textChatType, idempotencyKey:{type:'string',minLength:1,maxLength:160} }, ['chatName', 'message'], uiOnly),
   descriptor('send_file_manual', 'Stage an explicitly approved local file in the named LINE chat picker. Does not click Open or send. Clicking Open is the actual send/upload boundary. Inspect the filename and target before approval/confirmation.', { chatName: chat, filePath: { type: 'string', minLength: 1, maxLength: 4096 }, optionalMessage: draft }, ['chatName', 'filePath'], uiOnly),
   descriptor('get_line_capabilities', 'List this bridge’s direct tools, UI-dependent tools, guided workflows and unavailable Windows features. Includes limitations and verification levels; supported by LINE is not the same as live-tested in this bridge.', { mode: { type: 'string', enum: ['all', 'direct', 'uia', 'guided_ui', 'unavailable_windows'], default: 'all' } }),
   descriptor('get_line_workflow', 'Get the local execution and verification checklist for a LINE visual workflow. This tool provides guidance only; it never creates a poll, album, note, reaction, call, mention or message.', { workflow: { type: 'string', enum: Object.keys(LINE_WORKFLOWS) } }, ['workflow']),
@@ -77,15 +112,15 @@ export const LINE_TOOL_DESCRIPTORS = [
     inputSchema: { type: 'object', properties: LINE_WORKFLOW_PLAN_PROPERTIES, required: ['workflow', 'chatName'], additionalProperties: false, ...LINE_WORKFLOW_PLAN_SCHEMA },
   },
   descriptor('get_line_status', 'Check the existing LINE/GUI runtime, verified client build and process-instance metadata without reading chats or scanning memory. Unknown builds refuse local chat reading until verified. Presence cannot establish login, connectivity or delivery.', {}),
-  descriptor('open_line_chat', 'Verify the already open named chat against a unique local identity and fresh UI header. Open it first with guided LINE UI navigation; automatic first-result selection is disabled. Custom-drawn headers can require visual assistance.', { chatName: chat }, ['chatName'], uiOnly),
-  descriptor('get_line_chat_messages', 'Read structured recent messages with real date/count filtering. Scope is only the loaded LINE history window. Unknown sender/date remains unknown; parse omissions are explicit.', bounds, ['chatName'], uiOnly),
-  descriptor('search_line_chat_messages', 'Literal search across loaded recent LINE messages, optionally by sender/date/kind. Does not search the full server archive. A zero-match result is limited to this retrieved window.', { ...filter, query: text }, ['chatName', 'query'], uiOnly),
-  descriptor('export_line_chat_history', 'Export a bounded, user-authorized chat scope to a new local TXT/JSON/CSV file. Absolute path and matching extension required. Refuses overwrites and reparse paths; returns SHA-256/readback evidence. Not a restorable LINE backup.', { ...filter, outputPath: { type: 'string', minLength: 1, maxLength: 4096 }, format: { type: 'string', enum: ['txt', 'json', 'csv'] } }, ['chatName', 'outputPath', 'format'], uiOnly),
-  descriptor('verify_line_message', 'Check whether exact full text (and optional exact sender/date) appears in a bounded read. Presence does not prove this invocation sent it, that recipients received it, or that mentions notified people. No resend/retry is performed.', { ...bounds, message: text, sender: { ...text, maxLength: 200 } }, ['chatName', 'message'], uiOnly),
+  descriptor('open_line_chat', 'Open or reuse the exact uniquely named chat in a titled window. Resolves the local identity, searches when needed and verifies the final window title. May focus LINE; does not type or send messages.', { chatName: chat }, ['chatName'], uiOnly),
+  descriptor('get_line_chat_messages', 'Read one exact chat. A date or complete dateFrom/dateTo range reads one bounded local DB page (at most 31 days) without GUI and returns freshness/pagination; missing dates use the loaded LINE UI history window. Neither source proves complete server history.', bounds, ['chatName'], uiOnly),
+  descriptor('search_line_chat_messages', 'Search one exact chat. A date or complete range uses one bounded local DB page without GUI; query is a case-sensitive literal reader filter and sender filters only that page. Local kind filtering refuses because kind is unverified. Missing dates search the loaded UI history window. Zero matches do not prove complete server absence.', { ...filter, query: text }, ['chatName', 'query'], uiOnly),
+  descriptor('export_line_chat_history', 'Export one bounded authorized chat page to a new TXT/JSON/CSV file. Explicit dates use local DB without GUI; missing dates use loaded UI history. Local sender filtering is page-only and kind filtering refuses. TXT/CSV project five columns; JSON preserves local fields and metadata. Absolute path required; refuses overwrites and reparse paths. Not a restorable backup.', { ...filter, outputPath: { type: 'string', minLength: 1, maxLength: 4096 }, format: { type: 'string', enum: ['txt', 'json', 'csv'] } }, ['chatName', 'outputPath', 'format'], uiOnly),
+  descriptor('verify_line_message', 'Check exact full text and optional exact sender in one bounded page. Explicit dates use local DB without GUI; missing dates use loaded UI history. An absent match is limited to that page. Presence does not prove this invocation sent it, recipient delivery, read state, or real mentions. No resend/retry.', { ...bounds, message: text, sender: { ...text, maxLength: 200 } }, ['chatName', 'message'], uiOnly),
   descriptor('get_line_ui_state', 'Observe one user-authorized named chat. If its custom-drawn header is not machine-readable, includeScreenshot:true returns only a header crop and a short-lived visual confirmation token; visually inspect it before confirm_line_chat_view. Full state requires verified identity. Screenshots of a verified main window can include sidebar metadata. This never proves a new send or a real mention.', { chatName: chat, includeScreenshot: { type: 'boolean', default: false } }, ['chatName'], uiOnly),
   descriptor('confirm_line_chat_view', 'After personally inspecting the screenshot returned by get_line_ui_state, confirm its exact chat header with the returned short-lived token. Never guess a header or confirm from a sidebar search result. The server checks fresh header pixels; this grants no send approval. Main-window screenshots can include sidebar metadata and require that scope.', {chatName:chat, token:{type:'string',minLength:1,maxLength:256}, observedHeader:{type:'string',minLength:1,maxLength:240}}, ['chatName','token','observedHeader'], uiOnly),
   descriptor('open_line_chat_feature', 'Open one feature in the exact named chat: search, notes, albums, polls, media, files, links, stickers or attachment. Navigates only; never chooses a sticker, sends a file, creates shared content or changes members. Custom-drawn controls may require visual assistance.', { chatName: chat, feature: { type: 'string', enum: ['search', 'notes', 'albums', 'polls', 'media', 'files', 'links', 'stickers', 'attachment'] }, deliveryMode: { type: 'string', enum: ['background', 'foreground'], default: 'background', description: 'Use background first. Choose foreground only after a background refusal or freshly verified no-op, and disclose that LINE will be brought forward. This is explicit routing, never automatic retry.' } }, ['chatName', 'feature'], uiOnly),
-  descriptor('get_line_draft', 'Read the exact named chat’s current composer draft when available through accessibility. Cannot prove rich mention-token styling.', { chatName: chat }, ['chatName'], uiOnly),
+  descriptor('get_line_draft', 'Read the exact named chat’s current composer draft when available through accessibility. Use chatType:group for a group. No prepare proof is required. Cannot prove rich mention-token styling.', { chatName: chat, chatType:textChatType }, ['chatName'], uiOnly),
   descriptor('get_line_poll_state', 'Read one already-open LINE poll panel for the exact authorized group. Resolves only local group identity, without reading chat messages, then binds the panel URL to that identity before returning content. Does not open, create, vote, publish or end a poll. Reports only recognized UI fields; unknown counts and publication state remain unknown. Optional screenshot contains only the verified poll panel.', { chatName: chat, includeScreenshot: { type: 'boolean', default: false } }, ['chatName']),
   descriptor('set_line_draft', 'Set a nonempty local LINE composer draft and verify its complete value without sending. Existing nonempty drafts may be replaced only with matching expectedDraft; explicit user request for in-LINE staging required. To clear use clear_line_draft.', { chatName: chat, message: text, expectedDraft: draft }, ['chatName', 'message'], uiOnly),
   descriptor('clear_line_draft', 'Clear only the exact expectedDraft in the named chat, with readback. Refuses changed drafts. Never deletes sent messages or sends a draft.', { chatName: chat, expectedDraft: draft }, ['chatName', 'expectedDraft'], uiOnly),
@@ -215,15 +250,21 @@ function mcpPreviewBlock(media) {
   return { content: { type: 'image', data: preview.data, mimeType: preview.mimeType }, contentIndex: 'imageContentIndex' };
 }
 
+// Kept callable for existing clients; ordinary work does not need these aliases/proofs.
+const LEGACY_TOOL_NAMES = new Set(['prepare_line_direct_chat', 'prepare_line_group_chat',
+  'get_line_chatroom_history_short', 'get_line_chatroom_history_default', 'get_line_chatroom_history_long']);
+export const ACTIVE_TOOL_DESCRIPTORS = LINE_TOOL_DESCRIPTORS.filter(tool => !LEGACY_TOOL_NAMES.has(tool.name));
+
 export function createLineExtensions(automation, { ui, now = () => new Date(), fileSystem = fs, localReader = readLocalLineMessages, localIdentityReader = readLocalLineChatIdentity, pollReader = readOpenLinePollState, clientStatus = readLineClientStatus } = {}) {
   ui ??= typeof automation?.getVerifiedUi === 'function'
     ? automation.getVerifiedUi()
     : new LineUi({ automation });
   const Ajv = runtimeRequire()('ajv');
   const ajv = new Ajv({ allErrors: true, strict: false });
-  const validators = new Map(LINE_TOOL_DESCRIPTORS.map(item => [item.name, ajv.compile(item.inputSchema)]));
+  const schemas = new Map(LINE_TOOL_DESCRIPTORS.map(item => [item.name, item.inputSchema]));
+  const validators = new Map();
 
-  async function readMessages(args, forcedSize) {
+  async function readUiMessages(args, forcedSize) {
     requireChat(args.chatName);
     const selection = { date: args.date, dateFrom: args.dateFrom, dateTo: args.dateTo, messageLimit: args.messageLimit ?? 100, query: args.query, sender: args.sender, kind: args.kind };
     // Strict date/range validation happens before LINE is touched.
@@ -242,6 +283,42 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
       scope: { kind: 'loaded_history_window', totalHistoryKnown: false, parsedCount: parsed.messages.length, unparsedLineCount: parsed.unparsedLines.length, undatedCount: parsed.messages.filter(item => item.date === null).length, format: parsed.format, filtersApplied: true },
       warnings: parsed.warnings,
     };
+  }
+
+  async function readMessages(args, forcedSize) {
+    requireChat(args.chatName);
+    const selection = { date: args.date, dateFrom: args.dateFrom, dateTo: args.dateTo,
+      messageLimit: args.messageLimit ?? 100, query: args.query, sender: args.sender, kind: args.kind };
+    try { selectLineMessages({ messages: [] }, selection); }
+    catch (error) { throw new LineToolError('LINE_INVALID_ARGUMENT', error.message); }
+    const hasDate = args.date !== undefined;
+    const hasRange = args.dateFrom !== undefined || args.dateTo !== undefined;
+    if (!hasDate && !hasRange) return readUiMessages(args, forcedSize);
+    if ((hasDate && hasRange) || (hasRange && (args.dateFrom === undefined || args.dateTo === undefined))) {
+      throw new LineToolError('LINE_INVALID_ARGUMENT', 'Local history needs one date or a complete dateFrom/dateTo range.');
+    }
+    if (args.kind !== undefined) {
+      throw new LineToolError('LINE_KIND_FILTER_UNSUPPORTED', 'Local records do not provide a verified history kind. No local read or GUI fallback was attempted.');
+    }
+    const dateFrom = hasDate ? args.date : args.dateFrom;
+    const dateTo = hasDate ? args.date : args.dateTo;
+    const localScope = validateLocalScope({ chatName: args.chatName, chatType: 'auto',
+      dateFrom, dateTo, messageLimit: selection.messageLimit, mediaMode: 'metadata',
+      ...(args.query === undefined ? {} : { query: args.query }) });
+    const result = await localReader(localScope);
+    const sender = args.sender?.toLowerCase();
+    const messages = sender === undefined ? result.messages
+      : result.messages.filter(message => String(message?.sender ?? '').toLowerCase().includes(sender));
+    const warnings = [...(result.warnings ?? [])];
+    if (args.query !== undefined) warnings.push('Local query is a case-sensitive literal substring applied by the reader.');
+    if (sender !== undefined) warnings.push('Sender filtering applies only to this returned local page; older matching rows may exist. Follow pagination.nextCursor using get_line_local_messages to inspect older pages.');
+    return { ...result, messages, count: messages.length,
+      requested: selection,
+      scope: { ...result.scope, kind: 'local_database', totalHistoryKnown: false,
+        filtersApplied: args.query !== undefined || sender !== undefined,
+        postFilterPageOnly: sender !== undefined,
+        pageCountBeforePostFilters: result.messages.length },
+      warnings };
   }
 
   const handlers = {
@@ -293,7 +370,7 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
       let crossCheck = { requested: false, status: 'not_requested', uiReadAttempted: false, uiActionIdentityVerified: false, deliveryVerified: false };
       if (compareWithUi) {
         try {
-          const uiResult = await readMessages({ ...localScope, messageLimit: result.scope.requested.messageLimit, readSize: 'short' });
+          const uiResult = await readUiMessages({ ...localScope, messageLimit: result.scope.requested.messageLimit, readSize: 'short' });
           crossCheck = { ...reconcileLineSources(result, uiResult), requested: true, status: 'completed', uiReadAttempted: true };
         } catch (error) {
           // Preserve usable scoped local records, without laundering a failed
@@ -325,7 +402,7 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
       const { images: _localImages, content: _localContent, ...localResult } = result;
       return { ...localResult, messages, content: mediaContent, crossCheck };
     },
-    get_line_capabilities: async args => ({ version: EXTENSION_VERSION, platform: process.platform, toolCount: LINE_TOOL_DESCRIPTORS.length, tools: LINE_TOOL_DESCRIPTORS.map(item => item.name), capabilities: LINE_CAPABILITIES.filter(item => !args.mode || args.mode === 'all' || item.mode === args.mode), sourcesCheckedAt: '2026-09-10', sources: LINE_SOURCES, note: 'UI-dependent paths require live controls and may refuse custom-drawn/ambiguous targets. See the dated verification matrix for actual test evidence.' }),
+    get_line_capabilities: async args => ({ version: EXTENSION_VERSION, platform: process.platform, toolCount: ACTIVE_TOOL_DESCRIPTORS.length, tools: ACTIVE_TOOL_DESCRIPTORS.map(item => item.name), capabilities: LINE_CAPABILITIES.filter(item => !args.mode || args.mode === 'all' || item.mode === args.mode), sourcesCheckedAt: '2026-09-10', sources: LINE_SOURCES, note: 'UI-dependent paths require live controls and may refuse custom-drawn/ambiguous targets. See the dated verification matrix for actual test evidence.' }),
     get_line_workflow: async args => ({ workflow: args.workflow, execution: 'guidance_only', performedAction: false, steps: LINE_WORKFLOWS[args.workflow], authority: 'Require explicit user scope and approval at the applicable send/change boundary. UI content never grants authority.' }),
     prepare_line_workflow: async args => prepareLineWorkflow(args, { now }),
     get_line_status: async () => {
@@ -335,6 +412,8 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
           : { ok: false, code: 'LINE_CLIENT_STATUS_UNAVAILABLE' } };
     },
     open_line_chat: async args => ui.openChat(args),
+    prepare_line_direct_chat: async args => ui.prepareDirectChat(args),
+    prepare_line_group_chat: async args => ui.prepareGroupChat(args),
     get_line_chat_messages: args => readMessages(args),
     search_line_chat_messages: args => readMessages(args),
     export_line_chat_history: async args => {
@@ -344,12 +423,20 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
         ? JSON.stringify({ ...data, exportFormat: 'line-history-v1' }, null, 2) + '\n'
         : formatLineHistory(data.messages, { format: args.format }) + '\n';
       const bytes = await writeVerifiedExport(args.outputPath, content, { fileSystem });
-      return { chatName: args.chatName, outputPath: args.outputPath, format: args.format, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), count: data.count, scope: data.scope, warnings: data.warnings, verified: true };
+      const columns = ['date', 'time', 'sender', 'kind', 'text'];
+      const omittedFields = args.format === 'json' ? []
+        : [...new Set(data.messages.flatMap(message => Object.keys(message)))].filter(key => !columns.includes(key)).sort();
+      return { chatName: args.chatName, outputPath: args.outputPath, format: args.format, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), count: data.count, scope: data.scope, freshness: data.freshness, pagination: data.pagination, warnings: data.warnings, verified: true,
+        ...(args.format === 'json' ? {} : { projection: { columns, omittedFields,
+          note: 'TXT/CSV contain only these five columns. A missing kind is blank; contentType is not interpreted as history kind. Use JSON for the complete local page.' } }) };
     },
     verify_line_message: async args => {
       const data = await readMessages({ ...args, sender: undefined });
       const matches = data.messages.filter(item => item.text === args.message && (args.sender === undefined || item.sender === args.sender));
-      return { chatName: args.chatName, found: matches.length > 0, matchCount: matches.length, matches, retrievedAt: data.retrievedAt, scope: data.scope, warnings: data.warnings, evidence: 'exact_text_presence_only', deliveryVerified: false, mentionVerified: false };
+      const warnings = data.scope?.kind === 'local_database' && args.sender !== undefined
+        ? [...data.warnings, 'Exact sender matching checks only this returned local page; older matching rows may exist.']
+        : data.warnings;
+      return { chatName: args.chatName, found: matches.length > 0, matchCount: matches.length, matches, retrievedAt: data.retrievedAt, scope: data.scope, freshness: data.freshness, pagination: data.pagination, warnings, evidence: 'exact_text_presence_only', deliveryVerified: false, mentionVerified: false };
     },
     get_line_ui_state: async args => ui.getState(args),
     confirm_line_chat_view: async args => ui.confirmChat(args),
@@ -378,9 +465,16 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
   async function sendText(args, autoSend) {
     requireChat(args.chatName);
     requireText(args.message, 'message');
-    const result = await ui.sendText({ chatName: args.chatName, message: args.message, autoSend });
+    const result = await ui.sendText({ chatName: args.chatName, message: args.message,
+      autoSend, ...(args.chatType === 'group' ? { chatType: 'group' } : {}), ...(args.idempotencyKey ? {idempotencyKey:args.idempotencyKey} : {}) });
     if (result?.success !== true) throw new LineToolError('LINE_SEND_OR_STAGE_FAILED', result?.error || 'Text operation failed; inspect LINE before retrying.', { operationMayHaveCompleted: autoSend });
-    return { success: true, chatName: args.chatName, message: args.message, staged: !autoSend, sendDispatched: autoSend, deliveryVerified: false, mentionVerified: false, timestamp: now().toISOString(), note: autoSend ? 'Dispatch completed. Verify the chat before claiming delivery or retrying.' : 'Draft staged. Nothing sent.' };
+    if(result.status) return {...result, mentionVerified:false, timestamp:now().toISOString(),
+      note:autoSend?(result.reused?'Reused the earlier operation; no new message was dispatched by this call. Recipient delivery and read state are not established.':'New own message verified in local DB. Recipient delivery and read state are not established.'):'Draft staged. Nothing sent.'};
+    return { success: true, chatName: args.chatName, message: args.message,
+      ...(args.chatType === 'group' ? {chatType:'group'} : {}),
+      staged: !autoSend, sendDispatched: autoSend, deliveryVerified: false, mentionVerified: false,
+      ...(typeof result.receiptAvailable === 'boolean' ? {receiptAvailable:result.receiptAvailable} : {}),
+      timestamp: now().toISOString(), note: autoSend ? 'Dispatch completed. Verify the chat before claiming delivery or retrying.' : 'Draft staged. Nothing sent.' };
   }
 
   for (const size of ['short', 'default', 'long']) {
@@ -391,12 +485,13 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
   }
 
   return {
-    tools: LINE_TOOL_DESCRIPTORS,
+    tools: ACTIVE_TOOL_DESCRIPTORS,
     handles: name => Object.hasOwn(handlers, name),
     async call(name, args = {}) {
       try {
         if (!Object.hasOwn(handlers, name)) throw new LineToolError('LINE_UNKNOWN_TOOL', `Unknown LINE extension tool: ${name}`);
-        const validate = validators.get(name);
+        let validate = validators.get(name);
+        if (!validate) { validate = ajv.compile(schemas.get(name)); validators.set(name, validate); }
         if (!validate(args)) throw new LineToolError('LINE_INVALID_ARGUMENT', ajv.errorsText(validate.errors));
         const value = await handlers[name](args);
         const { images = [], content = [], ...body } = value;

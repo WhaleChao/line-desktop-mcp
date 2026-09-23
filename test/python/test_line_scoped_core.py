@@ -147,14 +147,14 @@ class ScopeTests(unittest.TestCase):
         self.db.execute('INSERT INTO _groupChat VALUES (?,?)', (None, 'Malformed ID'))
         with self.assertRaises(core.ReaderError) as caught:
             core.read_scoped(self.db, gui, {})
-        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_UNAVAILABLE')
+        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_ID_INVALID')
         self.db.execute('DELETE FROM _groupChat WHERE _chatMid IS NULL')
 
         self.db.execute('INSERT INTO _contact VALUES (?,?,?)', ('u-empty', None, '\u00a0\ufeff'))
         self.db.execute('INSERT INTO _chat VALUES (?,?)', ('u-empty', 0))
-        with self.assertRaises(core.ReaderError) as caught:
-            core.read_scoped(self.db, gui, {})
-        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_UNAVAILABLE')
+        resolved = core.read_scoped(self.db, gui, {})
+        self.assertEqual(resolved['chatRef'], core.reference('chat', 'c1'))
+        self.assertEqual(resolved['chatIdentity']['guiDisplayNameUnique'], True)
         self.db.execute('DELETE FROM _contact WHERE _mid=?', ('u-empty',))
         self.db.execute('DELETE FROM _chat WHERE _id=?', ('u-empty',))
 
@@ -166,12 +166,12 @@ class ScopeTests(unittest.TestCase):
                 return Rows()
         with self.assertRaises(core.ReaderError) as caught:
             core.read_scoped(MalformedConnection(), gui, {})
-        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_UNAVAILABLE')
+        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_ROW_INVALID')
 
         self.db.execute('DROP TABLE _contact')
         with self.assertRaises(core.ReaderError) as caught:
             core.read_scoped(self.db, gui, {})
-        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_UNAVAILABLE')
+        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_QUERY_FAILED')
 
     def test_gui_identity_requires_complete_inventory_and_enforces_total_cap(self):
         gui = {**self.args, 'identityOnly': True, 'guiIdentityOnly': True}
@@ -188,13 +188,13 @@ class ScopeTests(unittest.TestCase):
                 raise core.ReaderError('RESULT_TOO_LARGE')
         with self.assertRaises(core.ReaderError) as caught:
             core.read_scoped(IncompleteConnection(), gui, {})
-        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_UNAVAILABLE')
+        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_QUERY_RESULT_TOO_LARGE')
 
         self.db.executemany('INSERT INTO _groupChat VALUES (?,?)',
                             ((f'over-{n:05}', f'Over cap {n}') for n in range(10001)))
         with self.assertRaises(core.ReaderError) as caught:
             core.read_scoped(self.db, gui, {})
-        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_UNAVAILABLE')
+        self.assertEqual(caught.exception.code, 'GUI_IDENTITY_INVENTORY_LIMIT')
 
     def test_gui_identity_pages_complete_inventory_and_reads_no_messages(self):
         self.db.execute('DELETE FROM _groupChat WHERE _chatMid=?', ('c1',))

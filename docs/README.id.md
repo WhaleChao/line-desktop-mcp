@@ -8,7 +8,9 @@ Pilih chat dan rentang tanggal. Biarkan asisten AI menata percakapan bersama gam
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[Unduh v3.1.0](https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v3.1.0) · [Catatan rilis](releases/v3.1.0.id.md) · [Instalasi](quickstart-windows.md) · [Tingkatkan ke v3.1.0](MIGRATING.md#upgrading-to-v310) · [Kontrak teknis](windows-extensions.md)
+[Catatan rilis v3.2.0](releases/v3.2.0.id.md) · [Instalasi](quickstart-windows.md) · [Tingkatkan ke v3.2.0](MIGRATING.md#upgrading-to-v320) · [Kontrak teknis](windows-extensions.md)
+
+**v3.2.0 — Pengiriman teks dan catatan lokal:** Identitas chat dan pengirim sendiri diperiksa dengan tepat, lalu pesan baru milik sendiri dicari dalam batas 30 detik. `RECORDED_LOCAL` bukan bukti diterima atau dibaca. Operasi yang belum pasti diperiksa secara baca-saja dengan `idempotencyKey` yang sama, tanpa pengiriman ulang otomatis. Perintah MCP bertanggal memakai pembaca lokal bersama; perintah lama tanpa tanggal tetap memakai riwayat UI. [Rincian](releases/v3.2.0.id.md)
 
 **v3.1.0 — CLI lokal hanya-baca：** Menambahkan `line-cli` untuk daftar kemampuan, status lokal, pembacaan chat tertentu menurut tanggal, dan ekspor JSON/TXT/CSV. Setiap pemanggilan mengembalikan satu halaman dengan rentang maksimal 31 hari. CLI tidak mengoperasikan GUI atau mengirim pesan. [CLI](CLI.md) · [v3.1.0](releases/v3.1.0.id.md)
 
@@ -17,7 +19,7 @@ Pilih chat dan rentang tanggal. Biarkan asisten AI menata percakapan bersama gam
 
 **LINE Agent MCP** adalah edisi komunitas Windows yang dikelola oleh [bensonmaxai](https://github.com/bensonmaxai/line-desktop-mcp), berdasarkan [proyek asli Geoffrey Wang](https://github.com/dtwang/line-desktop-mcp). Proyek ini menghubungkan klien MCP lokal ke LINE Desktop yang sudah masuk. Codex dapat digunakan sebagai klien sehari-hari, dan klien MCP lokal lain juga dapat terhubung. Proyek ini tidak berafiliasi dengan LINE.
 
-Atur `LINE_MCP_EXTENSIONS=1` di Windows untuk menggunakan **29 tools**. Tanpa flag ini, **lima tools** bawaan tetap terdaftar; nama, urutan, dan skema inputnya tetap sama. macOS juga mencantumkan lima nama itu, tetapi pembacaan, pengiriman, dan operasi file tidak tersedia pada rilis ini.
+Atur `LINE_MCP_EXTENSIONS=1` di Windows untuk menampilkan **26 tools aktif**. Lima alias lama tetap dapat dipanggil meski tersembunyi. Tanpa flag ini, **lima tools** bawaan tetap terdaftar. macOS juga mencantumkan lima nama itu, tetapi pembacaan, pengiriman, dan operasi file tidak tersedia pada rilis ini.
 
 **Rilis keamanan v3.0.0 (12 September 2026):** Semua jalur GUI Windows untuk chat bernama, termasuk lima tools bawaan, memerlukan CUA dan local reader yang dikonfigurasi. Pemeriksaan metadata privat tidak membaca pesan atau media, hanya memastikan satu grup atau direct chat yang sudah ada, lalu memverifikasi header LINE baru dari chat yang diizinkan dan sudah dibuka oleh pengguna atau UI terpandu. `open_line_chat` hanya memverifikasi; ia tidak membuka hasil pencarian pertama secara otomatis. macOS mempertahankan lima descriptor, tetapi pembacaan chat, pengiriman, dan file ditolak dengan `LINE_CHAT_VERIFICATION_UNAVAILABLE`; tidak ada dukungan operasional macOS. [Langkah peningkatan](MIGRATING.md#upgrading-to-v300)
 
@@ -38,17 +40,17 @@ Minta asisten meninjau chat yang disebutkan dan melaporkan progres saat ini. Asi
 
 Draf teks biasa ditinjau di Codex. Agen melakukan pemeriksaan UI secara visual, tetapi mention nyata dan perubahan konten bersama tetap memerlukan alur kerja serta persetujuan khususnya. Rencana bukan bukti bahwa suatu tindakan telah terjadi.
 
-## Instalasi dan peningkatan ke v3.1.0
+## Instalasi dan peningkatan ke v3.2.0
 
-Jika ingin memakai direktori kerja terpisah, ambil repository yang sama pada tag v3.1.0:
+Ambil repository yang sama pada tag v3.2.0 ke direktori terpisah:
 
 ```powershell
-git clone --branch v3.1.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.2.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
 
-Untuk berpindah dari `line-desktop-mcp` v1.2.0 atau v2.0.0, cadangkan dahulu konfigurasi klien MCP saat ini. Ambil v3.1.0 ke direktori source baru yang berdampingan dengan perintah di atas, lalu arahkan registration MCP yang ada ke direktori baru itu. Simpan checkout, launcher, dan konfigurasi sebelumnya untuk rollback. Akun LINE dan data chat tidak perlu dimigrasikan.
+Untuk berpindah dari `line-desktop-mcp` versi sebelumnya, cadangkan dahulu konfigurasi klien MCP saat ini. Ambil v3.2.0 ke direktori source baru yang berdampingan dengan perintah di atas, lalu arahkan registration MCP yang ada ke direktori baru itu. Simpan checkout, launcher, dan konfigurasi sebelumnya untuk rollback. Akun LINE dan data chat tidak perlu dimigrasikan.
 
 Gunakan Node.js 24 LTS atau lebih baru (teruji: 24.19.0) serta komponen runtime yang dikonfigurasi terpisah untuk tools yang dipakai. Pembacaan lokal memerlukan Windows x64, Python x64, `cryptography` dan Pillow, SQLite3MC DLL yang dipasangi pin, serta `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` yang eksplisit. Kedua paket Python wajib untuk semua pembacaan lokal, termasuk mode metadata. Pada v3.1.0, jalur GUI Windows untuk chat bernama, termasuk lima tools bawaan, juga memerlukan lingkungan local reader ini dan `LINE_MCP_CUA_DRIVER`. Pengguna atau UI terpandu harus membuka chat yang diizinkan terlebih dahulu; `open_line_chat` tidak mencari secara otomatis. Nama tampilan mentah harus cocok tepat; bentuk NFC yang setara, spasi yang diringkas/dipotong, dan keluarga benturan jumlah anggota gagal secara tertutup. Tools UI memakai AutoHotkey v2 dan Windows OCR lokal bila diperlukan. Lihat [panduan instalasi](quickstart-windows.md).
 
@@ -58,7 +60,7 @@ LINE Agent MCP adalah nama tampilan untuk edisi komunitas Windows ini. v3.0.0 me
 
 Rilis ini hanya berjalan melalui stdio lokal. Tidak ada server HTTP/REST atau layanan cloud berbayar, dan `.env` pada current working directory tidak dimuat otomatis; konfigurasi datang dari variabel lingkungan yang diberikan secara eksplisit oleh klien MCP.
 
-Gunakan `line-desktop-mcp-3.1.0.tgz` dan `SHA256SUMS.txt` dari GitHub release v3.1.0. Proyek ini tidak dipublikasikan ke npm registry dan tidak menyediakan bundel MCPB. Paket lama `line-desktop-mcp@latest` tidak memasang rilis ini.
+Gunakan `line-desktop-mcp-3.2.0.tgz` dan `SHA256SUMS.txt` dari GitHub release v3.2.0. Proyek ini tidak dipublikasikan ke npm registry dan tidak menyediakan bundel MCPB. Paket lama `line-desktop-mcp@latest` tidak memasang rilis ini.
 
 ## Bukti dan batasan
 

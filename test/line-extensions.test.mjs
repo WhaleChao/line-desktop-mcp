@@ -62,7 +62,7 @@ function fixture(raw = history, options = {}) {
 test('tool catalogue is unique, closed-schema and exposes six compatible legacy names', () => {
   const names = LINE_TOOL_DESCRIPTORS.map(item => item.name);
   assert.equal(names.length, new Set(names).size);
-  assert.equal(names.length, 29);
+  assert.equal(names.length, 31);
   for (const name of ['get_line_chatroom_history_short', 'get_line_chatroom_history_default', 'get_line_chatroom_history_long', 'send_message_manual', 'send_message_auto', 'send_file_manual']) assert.ok(names.includes(name));
   for (const item of LINE_TOOL_DESCRIPTORS) assert.equal(item.inputSchema.additionalProperties, false);
 });
@@ -168,19 +168,136 @@ test('invalid schemas, exact-chat inputs and impossible dates never reach LINE',
   assert.deepEqual(calls, []);
 });
 
-test('history returns exact date/count bounds without losing multiline Unicode', async () => {
-  const { extension, calls } = fixture();
+test('dated history uses one exact local scope while undated legacy history keeps UI paging', async () => {
+  const localCalls = [];
+  const { extension, calls } = fixture(history, { localReader: async scope => {
+    localCalls.push(scope);
+    return { ok: true, chatName: scope.chatName, count: 1,
+      messages: [{ sourceRef: 'message:' + 'a'.repeat(24), date: scope.dateFrom,
+        sender: 'Bob', text: '二行\n第二行😀', contentType: 0 }],
+      scope: { kind: 'local_database', requested: scope, totalHistoryKnown: false, truncated: false },
+      pagination: { hasMore: false, nextCursor: null }, warnings: ['Local cache is bounded.'] };
+  } });
   const result = body(await extension.call('get_line_chat_messages', { chatName: 'Test', date: '2026-09-09', messageLimit: 1 }));
   assert.equal(result.count, 1);
   assert.equal(result.messages[0].text, '二行\n第二行😀');
   assert.equal(result.scope.totalHistoryKnown, false);
-  assert.equal(result.scope.filtersApplied, true);
-  assert.equal(calls[0][4], 5);
+  assert.equal(result.scope.kind, 'local_database');
+  assert.deepEqual(localCalls[0], { chatName: 'Test', chatType: 'auto', dateFrom: '2026-09-09',
+    dateTo: '2026-09-09', messageLimit: 1, mediaMode: 'metadata' });
+  assert.deepEqual(calls, []);
   const legacy = body(await extension.call('get_line_chatroom_history_long', { chatName: 'Test', messageLimit: 2 }));
   assert.equal(legacy.count, 2);
   assert.match(legacy.history, /最後/);
   assert.doesNotMatch(legacy.history, /first/);
-  assert.equal(calls[1][4], 50);
+  assert.equal(calls[0][4], 50);
+});
+
+test('scoped history refuses incomplete or broad dates and propagates ambiguity without GUI fallback', async () => {
+  const localCalls = [];
+  const { extension, calls } = fixture(history, { localReader: async scope => {
+    localCalls.push(scope);
+    throw Object.assign(new Error('Synthetic ambiguous name'), { code: 'CHAT_AMBIGUOUS' });
+  } });
+  for (const args of [
+    { dateFrom: '2026-09-01' }, { dateTo: '2026-09-01' },
+    { date: '2026-09-01', dateFrom: '2026-09-01', dateTo: '2026-09-01' },
+    { dateFrom: '2026-08-01', dateTo: '2026-09-01' },
+  ]) {
+    const result = await extension.call('get_line_chat_messages', { chatName: 'Test', ...args });
+    assert.equal(result.isError, true);
+    assert.equal(body(result).code, 'LINE_INVALID_ARGUMENT');
+  }
+  assert.deepEqual(localCalls, []);
+  assert.deepEqual(calls, []);
+  const ambiguous = await extension.call('get_line_chat_messages', {
+    chatName: 'Test', dateFrom: '2026-09-01', dateTo: '2026-09-02', messageLimit: 2,
+  });
+  assert.equal(ambiguous.isError, true);
+  assert.equal(body(ambiguous).code, 'CHAT_AMBIGUOUS');
+  assert.equal(localCalls.length, 1);
+  assert.deepEqual(calls, []);
+});
+
+test('scoped search retains local fields and pagination when sender filtering narrows a page', async () => {
+  const localCalls = [];
+  const messages = [
+    { sourceRef: 'message:' + 'a'.repeat(24), date: '2026-09-23', sender: 'Alice',
+      text: 'needle\n第二行', contentType: 0, sourceStatus: 2 },
+    { sourceRef: 'message:' + 'b'.repeat(24), date: '2026-09-23', sender: 'Bob',
+      text: 'needle', contentType: 0, sourceStatus: 2 },
+  ];
+  const pagination = { hasMore: true, nextCursor: 'synthetic-older-page', limitedBy: 'messageLimit' };
+  const freshness = { snapshotCapturedAt: '2026-09-23T02:00:00Z' };
+  const { extension, calls } = fixture(history, { localReader: async scope => {
+    localCalls.push(scope);
+    return { ok: true, chatName: scope.chatName, messages, count: 2, pagination, freshness,
+      scope: { kind: 'local_database', requested: scope, totalHistoryKnown: false, truncated: true },
+      warnings: ['Local cached records do not prove complete server history.'] };
+  } });
+  const result = body(await extension.call('search_line_chat_messages', { chatName: 'Test',
+    date: '2026-09-23', messageLimit: 2, query: 'needle', sender: 'ALICE' }));
+  assert.equal(result.count, 1);
+  assert.deepEqual(result.messages, [messages[0]]);
+  assert.deepEqual(result.pagination, pagination);
+  assert.deepEqual(result.freshness, freshness);
+  assert.equal(result.scope.kind, 'local_database');
+  assert.equal(result.scope.pageCountBeforePostFilters, 2);
+  assert.equal(result.scope.postFilterPageOnly, true);
+  assert.equal(result.scope.truncated, true);
+  assert.match(result.warnings.join(' '), /older matching rows may exist/u);
+  assert.match(result.warnings.join(' '), /case-sensitive literal/u);
+  assert.equal(localCalls[0].query, 'needle');
+  assert.equal(localCalls[0].messageLimit, 2);
+  assert.deepEqual(calls, []);
+  const unsupported = await extension.call('search_line_chat_messages', { chatName: 'Test',
+    date: '2026-09-23', query: 'needle', kind: 'message' });
+  assert.equal(unsupported.isError, true);
+  assert.equal(body(unsupported).code, 'LINE_KIND_FILTER_UNSUPPORTED');
+  assert.equal(localCalls.length, 1);
+});
+
+test('scoped export and exact verification retain local freshness and disclose TXT projection', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'line-scoped-export-'));
+  const messages = [{ sourceRef: 'message:' + 'c'.repeat(24), date: '2026-09-23',
+    sender: 'Alice', text: '完整訊息\n第二行', contentType: 0, sourceStatus: 2 }];
+  const freshness = { snapshotCapturedAt: '2026-09-23T02:00:00Z' };
+  const pagination = { hasMore: false, nextCursor: null };
+  const { extension, calls } = fixture(history, { localReader: async scope => ({
+    ok: true, chatName: scope.chatName, messages, count: 1, freshness, pagination,
+    scope: { kind: 'local_database', requested: scope, totalHistoryKnown: false, truncated: false },
+    warnings: ['Local cache is bounded.'],
+  }) });
+  try {
+    for (const format of ['json', 'txt', 'csv']) {
+      const outputPath = path.join(directory, `scoped.${format}`);
+      const exported = body(await extension.call('export_line_chat_history', { chatName: 'Test',
+        date: '2026-09-23', messageLimit: 1, outputPath, format }));
+      assert.equal(exported.verified, true);
+      assert.equal(exported.scope.kind, 'local_database');
+      assert.deepEqual(exported.freshness, freshness);
+      assert.deepEqual(exported.pagination, pagination);
+      const saved = await fs.readFile(outputPath, 'utf8');
+      if (format === 'json') assert.deepEqual(JSON.parse(saved).messages, messages);
+      else {
+        assert.ok(exported.projection.omittedFields.includes('sourceRef'));
+        assert.match(exported.projection.note, /missing kind is blank/u);
+        assert.match(saved, /完整訊息/u);
+      }
+    }
+    const verified = body(await extension.call('verify_line_message', { chatName: 'Test',
+      date: '2026-09-23', message: '完整訊息\n第二行', sender: 'Alice' }));
+    assert.equal(verified.found, true);
+    assert.equal(verified.deliveryVerified, false);
+    assert.deepEqual(verified.matches, messages);
+    assert.deepEqual(verified.freshness, freshness);
+    assert.deepEqual(verified.pagination, pagination);
+    assert.match(verified.warnings.join(' '), /older matching rows may exist/u);
+    assert.deepEqual(calls, []);
+  } finally {
+    assert.ok(path.resolve(directory).startsWith(path.resolve(os.tmpdir()) + path.sep));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('search is literal and bounded; unknown formats are not successful empty results', async () => {

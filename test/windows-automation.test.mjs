@@ -250,7 +250,7 @@ test('file staging uses an exact LINE-owned native dialog, verifies the selected
 
   for (const fragment of [
     'target := AcquireExactLineTarget()',
-    'GuardedLineClick(target, AttachmentPoint(target))',
+    'GuardedLineSend(target, "^o")',
     'dialog := AcquireExactLineOpenDialog(target)',
     `SetExactLineFileName(target, dialog, "${filePath}")`,
     'WinGetPID("ahk_id " active) != target.pid',

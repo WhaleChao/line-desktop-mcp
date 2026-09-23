@@ -10,7 +10,12 @@ const CUA_INPUT_TOOLS = new Set([
 
 /** Existing CUA runtime, used over its public stdio MCP protocol. No daemon,
  * installer, permission-mode override, recording, or private pipe protocol. */
-export async function withCuaClient(callback) {
+export async function withCuaClient(callback, { deadline } = {}) {
+  const remaining = maximum => {
+    const value = deadline === undefined ? maximum : Math.min(maximum, deadline - Date.now());
+    if(value <= 0) throw new LineToolError('LINE_SEND_TIMEOUT', 'LINE operation reached its deadline.');
+    return value;
+  };
   const driverPath = requireConfiguredCuaDriver();
   const [{ Client }, { StdioClientTransport }, { AjvJsonSchemaValidator }] = await Promise.all([
     runtimeImport('@modelcontextprotocol/sdk/client/index.js'),
@@ -26,9 +31,9 @@ export async function withCuaClient(callback) {
   let failure;
   let inputAttempted = false;
   try {
-    await client.connect(transport, { timeout: 20000 });
+    await client.connect(transport, { timeout: remaining(20000) });
     connected = true;
-    const listed = await client.listTools();
+    const listed = await client.listTools({}, {timeout:remaining(20000)});
     const inputValidator = createCuaInputValidator(listed?.tools, { ajv });
     const tools = inputValidator.tools;
     const api = {
@@ -38,7 +43,7 @@ export async function withCuaClient(callback) {
         if (!tools.has(name)) throw new LineToolError('LINE_UI_CAPABILITY_UNAVAILABLE', `The active CUA runtime does not advertise ${name}.`);
         inputValidator.validate(name, args);
         if (CUA_INPUT_TOOLS.has(name)) inputAttempted = true;
-        const result = await callCuaTool(client, name, args);
+        const result = await callCuaTool(client, name, args, {timeout:remaining(25000)});
         const data = unwrapCua(result);
         if (result.isError) {
           throw new LineToolError('LINE_UI_ACTION_REFUSED', `CUA ${name}: ${data.message || data.error || data.code || 'operation refused'}`, {
@@ -105,9 +110,9 @@ export async function closeCuaSession(close, { failure, inputAttempted = false }
  * operations as possibly completed, while reads can safely report failure.
  * The fixed errors intentionally omit transport/backend text and arguments.
  */
-export async function callCuaTool(client, name, args) {
+export async function callCuaTool(client, name, args, {timeout=25000} = {}) {
   try {
-    return await client.callTool({ name, arguments: args }, undefined, { timeout: 25000 });
+    return await client.callTool({ name, arguments: args }, undefined, { timeout });
   } catch {
     if (isCuaInputTool(name)) {
       throw new LineToolError(
@@ -189,9 +194,10 @@ function createCuaAjv() {
 }
 
 export function unwrapCua(result) {
-  if (result?.structuredContent && typeof result.structuredContent === 'object') return result.structuredContent;
   const text = (result?.content || []).filter(item => item.type === 'text').map(item => item.text).join('\n');
-  try { return JSON.parse(text); } catch { return { message: text }; }
+  const structured = result?.structuredContent;
+  if (structured && typeof structured === 'object' && !result.isError) return structured;
+  try { return { ...structured, ...JSON.parse(text) }; } catch { return { ...structured, message: text }; }
 }
 
 export async function lineWindows(api) {

@@ -112,7 +112,7 @@ export class LineAutomation {
     return await this.automation.isLineRunning();
   }
 
-  async activateLine() {
-    return await this.automation.activateLine();
+  async activateLine(verifiedTarget) {
+    return await this.automation.activateLine(verifiedTarget);
   }
 }
