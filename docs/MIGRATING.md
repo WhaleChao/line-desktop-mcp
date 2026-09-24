@@ -1,14 +1,40 @@
-# Upgrade to v3.2.0
+# Upgrade to v3.3.0
 
 [Project home](../README.md) · [Windows installation](quickstart-windows.md) · [Features](features.md)
 
-LINE Agent MCP v3.2.0 continues the same
+LINE Agent MCP v3.3.0 continues the same
 [bensonmaxai/line-desktop-mcp](https://github.com/bensonmaxai/line-desktop-mcp)
 repository, package name, and MCP server name: **line-desktop-mcp**. The
 release uses the existing GitHub repository; it is not published to
 the npm registry or as an MCPB bundle. LINE account and chat data do not migrate.
 The reader still uses bounded, read-only local copies; it is not an account
 backup or a migration tool.
+
+## Upgrading to v3.3.0
+
+Install tag `v3.3.0` or the release archive in a new directory, keep the old
+installation for rollback, and use `npm ci --ignore-scripts`. Keep the existing
+Python, SQLite3MC and CUA configuration. Point the MCP client at the new server,
+reconnect and refresh schemas; expect version `3.3.0` and 33 active tools with
+`LINE_MCP_EXTENSIONS=1`. The five defaults and read-only CLI are unchanged.
+
+Clients may use `list_line_recent_chats` to select an opaque identity and pass
+both `expectedChatRef` and `expectedOwnSenderRef` to reads/sends. A successful
+list or identity check does not authorize a send. Only
+`IDENTITY_BOUND_REQUIRES_UI` needs the special already-open direct-window
+preparation; `IDENTITY_UNIQUE` keeps automatic opening. A `READY` result is a
+current observation, not a reusable permission token. Existing callers without
+the refs keep the stricter global-name uniqueness behavior.
+
+Forwarding adds a separate reviewed source/recipient operation with persistent
+dispatch intent. Never clear its journal or create a fresh operation to retry
+an uncertain dispatch. Cancel only before dispatch; recall remains a separate
+LINE UI action. Keep journals when rolling back so a previous uncertain send
+is not accidentally replayed. No LINE account or chat-data migration is needed.
+
+The public release uses the same runtime code as the live-tested
+`3.3.0-local.4` candidate, with release metadata and documentation finalized.
+See [validation and limitations](releases/v3.3.0.en.md).
 
 ## Upgrading to v3.2.0
 

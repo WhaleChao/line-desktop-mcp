@@ -17,11 +17,15 @@ class ReaderError(Exception):
 
 
 def validate_scope(args):
-    if not isinstance(args, dict) or set(args) - {'chatName', 'chatType', 'dateFrom', 'dateTo', 'messageLimit', 'query', 'cursor', 'mediaMode', 'mediaSourceRefs', 'identityOnly', 'guiIdentityOnly', 'guiCandidateOnly', 'groupCandidateOnly', 'expectedChatRef', 'requireUniqueName'}:
+    if isinstance(args, dict) and args.get('mode') == 'recentChats':
+        return validate_recent_scope(args)
+    if not isinstance(args, dict) or set(args) - {'chatName', 'chatType', 'dateFrom', 'dateTo', 'messageLimit', 'query', 'cursor', 'mediaMode', 'mediaSourceRefs', 'identityOnly', 'guiIdentityOnly', 'guiCandidateOnly', 'groupCandidateOnly', 'expectedChatRef', 'expectedOwnSenderRef', 'requireUniqueName', 'boundDirect'}:
         raise ReaderError('INVALID_SCOPE')
     if 'requireUniqueName' in args and args['requireUniqueName'] is not True:
         raise ReaderError('INVALID_SCOPE')
     if 'expectedChatRef' in args and not re.fullmatch(r'chat:[0-9a-f]{24}', str(args['expectedChatRef'])):
+        raise ReaderError('INVALID_SCOPE')
+    if 'expectedOwnSenderRef' in args and not re.fullmatch(r'sender:[0-9a-f]{24}', str(args['expectedOwnSenderRef'])):
         raise ReaderError('INVALID_SCOPE')
     chat = args.get('chatName')
     if not isinstance(chat, str) or not 1 <= len(chat) <= 200 or chat != chat.strip() or any(ord(c) < 32 for c in chat):
@@ -46,6 +50,12 @@ def validate_scope(args):
     if query is not None and (not isinstance(query, str) or not 1 <= len(query) <= 1000 or '\0' in query):
         raise ReaderError('INVALID_SCOPE')
     mode = args.get('mediaMode', 'metadata')
+    if 'boundDirect' in args and (args['boundDirect'] is not True or args.get('chatType') != 'direct'
+                                 or 'expectedChatRef' not in args or 'expectedOwnSenderRef' not in args
+                                 or (dates[1] - dates[0]).days > 2 or limit > 30 or mode != 'metadata'
+                                 or any(key in args for key in ('requireUniqueName', 'guiIdentityOnly',
+                                       'guiCandidateOnly', 'groupCandidateOnly', 'query', 'cursor', 'mediaSourceRefs'))):
+        raise ReaderError('INVALID_SCOPE')
     refs = args.get('mediaSourceRefs')
     if 'identityOnly' in args and (args['identityOnly'] is not True or mode != 'metadata'
                                   or any(key in args for key in ('query', 'cursor', 'mediaSourceRefs'))):
@@ -81,6 +91,22 @@ def validate_scope(args):
     if 'cursor' in args:
         decode_cursor(args['cursor'], args, start_ms, end_ms)
     return {**args, 'messageLimit': limit, 'mediaMode': mode}, start_ms, end_ms
+
+
+def validate_recent_scope(args):
+    """A separate closed mode; named-chat message flags never enter this path."""
+    if (not isinstance(args, dict) or set(args) - {'mode', 'days', 'query', 'limit'}
+            or args.get('mode') != 'recentChats' or type(args.get('days')) is not int
+            or args['days'] not in (14, 30)):
+        raise ReaderError('INVALID_SCOPE')
+    limit = args.get('limit', 50)
+    query = args.get('query')
+    if (type(limit) is not int or not 1 <= limit <= 50
+            or (query is not None and (not isinstance(query, str)
+                or not 1 <= len(query) <= 100 or any(unicodedata.category(c) == 'Cc' for c in query)))):
+        raise ReaderError('INVALID_SCOPE')
+    return {'mode': 'recentChats', 'days': args['days'], 'limit': limit,
+            **({'query': query} if query is not None else {})}
 
 
 def cursor_scope(args):
@@ -459,15 +485,95 @@ def own_sender_ref(connection):
     return reference('sender', mid) if _valid_gui_inventory_id(mid) else None
 
 
+def read_recent_chats(connection, args, *, now=None):
+    """List bounded activity metadata without selecting message content."""
+    scope = validate_recent_scope(args)
+    checked = now or dt.datetime.now(TZ)
+    if checked.tzinfo is None:
+        raise ReaderError('INVALID_SCOPE')
+    checked = checked.astimezone(TZ)
+    today = checked.date()
+    first = today - dt.timedelta(days=scope['days'] - 1)
+    start = int(dt.datetime.combine(first, dt.time(), TZ).timestamp() * 1000)
+    end = min(int(dt.datetime.combine(today + dt.timedelta(days=1), dt.time(), TZ).timestamp() * 1000),
+              int(checked.timestamp() * 1000) + 1)
+    # The GROUP BY bounds output cardinality; the fixed date predicate bounds
+    # source scope. Refuse an unusually large set instead of silently omitting.
+    activities = connection.execute(
+        'SELECT _chatId, MAX(_createdTime) FROM _message '
+        'WHERE _createdTime >= ? AND _createdTime < ? '
+        'GROUP BY _chatId ORDER BY MAX(_createdTime) DESC, _chatId LIMIT 1001',
+        (start, end)).fetchall()
+    if len(activities) > 1000:
+        raise ReaderError('RECENT_SCOPE_TOO_LARGE')
+    chats = []
+    unresolved = 0
+    conflicting = 0
+    for row in activities:
+        if not isinstance(row, (tuple, list)) or len(row) != 2:
+            raise ReaderError('RECENT_ROW_INVALID')
+        chat_id, timestamp = row
+        if not _valid_gui_inventory_id(chat_id) or type(timestamp) is not int or not start <= timestamp < end:
+            unresolved += 1
+            continue
+        group = connection.execute(
+            'SELECT _chatName FROM _groupChat WHERE _chatMid = ? LIMIT 3', (chat_id,)).fetchall()
+        direct = connection.execute(
+            'SELECT h._midType, CASE WHEN c._displayNameOverridden IS NULL '
+            "OR c._displayNameOverridden = '' THEN c._displayName ELSE c._displayNameOverridden END "
+            'FROM _chat h LEFT JOIN _contact c ON h._id = c._mid '
+            'WHERE h._id = ? LIMIT 3', (chat_id,)).fetchall()
+        if group and direct:
+            conflicting += 1
+            continue
+        if group:
+            kind = 'group'
+            names = [item[0] for item in group if isinstance(item, (tuple, list)) and len(item) == 1]
+            conflict = len(names) != len(group) or len(set(names)) > 1
+        elif direct:
+            kind = 'direct'
+            names = [item[1] for item in direct if isinstance(item, (tuple, list)) and len(item) == 2 and item[0] == 0]
+            conflict = len(names) != len(direct) or len(set(names)) > 1
+        else:
+            unresolved += 1
+            continue
+        if conflict or len(group if group else direct) >= 3:
+            conflicting += 1
+            continue
+        name = names[0]
+        if (not isinstance(name, str) or not 1 <= len(name) <= 200 or name != name.strip()
+                or any(unicodedata.category(c) == 'Cc' for c in name)):
+            unresolved += 1
+            continue
+        if 'query' in scope and scope['query'].casefold() not in name.casefold():
+            continue
+        chats.append({'chatRef': reference('chat', chat_id), 'chatName': name,
+                      'chatType': kind, 'lastMessageAt': dt.datetime.fromtimestamp(timestamp / 1000, TZ).isoformat(),
+                      'lastMessageTimestamp': timestamp})
+    chats.sort(key=lambda item: (-item['lastMessageTimestamp'], item['chatRef']))
+    warnings = []
+    if unresolved:
+        warnings.append(f'{unresolved} recent chat identities had no valid resolvable name and were excluded.')
+    if conflicting:
+        warnings.append(f'{conflicting} recent chat identities had conflicting records and were excluded.')
+    return {'ok': True, 'days': scope['days'], 'dateFrom': first.isoformat(),
+            'dateTo': today.isoformat(), 'checkedAt': checked.isoformat(),
+            'ownSenderRef': own_sender_ref(connection), 'chats': chats[:scope['limit']],
+            'hasMore': len(chats) > scope['limit'], 'warnings': warnings}
+
+
 def read_scoped(connection, args, snapshot, media_resolver=None, *,
                 message_budget_bytes=3*1024*1024, preview_budget_bytes=1024*1024, media_item_limit=20):
     """connection.execute(sql, parameters).fetchall(); only fixed, scoped SQL."""
+    if isinstance(args, dict) and args.get('mode') == 'recentChats':
+        return read_recent_chats(connection, args)
     args, start, end = validate_scope(args)
     gui_identity_only = args.get('guiIdentityOnly') is True
     gui_candidate_only = args.get('guiCandidateOnly') is True
     group_candidate_only = args.get('groupCandidateOnly') is True
+    bound_direct = args.get('boundDirect') is True
     chat_id, chat_identity = (resolve_gui_group_candidate_chat(connection, args) if group_candidate_only
-                              else resolve_gui_candidate_chat(connection, args) if gui_candidate_only
+                              else resolve_gui_candidate_chat(connection, args) if gui_candidate_only or bound_direct
                               else resolve_gui_chat(connection, args) if gui_identity_only
                               else resolve_chat(connection, {**args, 'chatType': 'auto'} if args.get('requireUniqueName') else args))
     if args.get('requireUniqueName') and args.get('chatType', 'auto') not in ('auto', chat_identity['kind']):
@@ -477,8 +583,19 @@ def read_scoped(connection, args, snapshot, media_resolver=None, *,
     chat_ref = reference('chat', chat_id)
     if args.get('expectedChatRef') is not None and args['expectedChatRef'] != chat_ref:
         raise ReaderError('CHAT_IDENTITY_CHANGED')
+    if args.get('expectedOwnSenderRef') is not None and own_sender_ref(connection) != args['expectedOwnSenderRef']:
+        raise ReaderError('CHAT_ACCOUNT_CHANGED')
+    if bound_direct:
+        try:
+            assert_unique_send_name(connection, args, chat_id, 'direct')
+            chat_identity['globalNameUnique'] = True
+        except ReaderError as error:
+            if error.code != 'CHAT_AMBIGUOUS':
+                raise
+            chat_identity['globalNameUnique'] = False
     if args.get('identityOnly') is True:
         return {'ok': True, 'chatName': args['chatName'], 'chatRef': chat_ref,
+                **({'ownSenderRef': own_sender_ref(connection)} if bound_direct else {}),
                 'chatIdentity': chat_identity, 'count': 0, 'messages': [],
                 'pagination': {'hasMore': False, 'nextCursor': None},
                 'retrievedAt': dt.datetime.now(TZ).isoformat(),

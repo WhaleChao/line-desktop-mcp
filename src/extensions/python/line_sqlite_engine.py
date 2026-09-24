@@ -186,7 +186,7 @@ class Connection:
                 return 1
             if action == 21:  # SELECT
                 return 0
-            if action == 31 and arg2 == b'instr':
+            if action == 31 and arg2 in (b'instr', b'max'):
                 return 0
             if action == 20 and database == b'main':
                 table = arg1.decode() if arg1 else ''

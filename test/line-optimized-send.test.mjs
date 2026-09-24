@@ -22,7 +22,7 @@ function environment({draft='', pressError=false, saveError=false, old=null,
   switchAtSnapshot=Infinity, emitReceipt=true, setError=null,
   identityError=null, backendError=null, identityChangeAtRead=Infinity,
   senderChangeAtRead=Infinity}={}) {
-  let reads=0, presses=0, writes=0, snapshots=0, journal=old;
+  let reads=0, presses=0, writes=0, snapshots=0, journalWrites=0, journal=old, readScopes=[];
   const window={app_name:'LINE.exe',title:chatName,pid:42,window_id:99,is_on_screen:true,minimized:false};
   const api={tools:new Set(['list_windows','get_window_state','set_value','press_key']),async call(name, input){
     if(name==='list_windows')return {windows:[{...window,
@@ -36,15 +36,15 @@ function environment({draft='', pressError=false, saveError=false, old=null,
   }};
   const ui={automation:{},withClient:fn=>backendError?Promise.reject(backendError):fn(api)};
   const dependencies={
-    async readMessages(){reads++;if(identityError)throw identityError;
+    async readMessages(scope){reads++;readScopes.push(scope);if(identityError)throw identityError;
       return {...baseline(),
         chatRef:reads>=identityChangeAtRead?'chat:ffffffffffffffffffffffff':chatRef,
         ownSenderRef:reads>=senderChangeAtRead?'sender:ffffffffffffffffffffffff':ownSenderRef,
         messages:presses && emitReceipt ? [receipt()] : []};},
     async readRecord(){return journal;},
-    async writeRecord(_file,value){if(saveError)throw new Error('synthetic journal failure');journal=structuredClone(value);},
+    async writeRecord(_file,value){journalWrites++;if(saveError)throw new Error('synthetic journal failure');journal=structuredClone(value);},
   };
-  return {ui,api,dependencies,stats:()=>({reads,presses,writes,snapshots,draft,journal})};
+  return {ui,api,dependencies,stats:()=>({reads,presses,writes,snapshots,journalWrites,readScopes,draft,journal})};
 }
 
 function oldRecord(status){return {status,operationId:'previous',startedAt:Date.now()-300000,
@@ -69,6 +69,51 @@ test('Return transport failure still verifies the local record; one input dispat
   assert.equal(env.stats().presses,1);
   assert.equal(env.stats().writes,1);
   assert.equal(env.stats().reads,3);
+});
+
+test('paired globally unique direct sends retain automatic opening and bounded receipts across midnight',async t=>{
+  let clock=Date.parse('2026-09-24T23:59:59.500+08:00');
+  t.mock.method(Date,'now',()=>clock);
+  const env=environment();
+  const read=env.dependencies.readMessages;
+  env.dependencies.readMessages=async scope=>{
+    assert.ok((Date.parse(scope.dateTo)-Date.parse(scope.dateFrom))/86400000<=2);
+    const result=await read(scope);
+    return {...result,chatIdentity:{kind:'direct',knownNameUnique:true,globalNameUnique:true},
+      freshness:{clockOrderValid:true,snapshotCapturedAt:new Date(clock).toISOString()}};
+  };
+  const call=env.api.call;
+  env.api.call=async(name,input)=>{const result=await call(name,input);if(name==='press_key')clock+=1000;return result;};
+  const result=await sendPlainText(env.ui,{...args,chatType:'direct',expectedChatRef:chatRef,
+    expectedOwnSenderRef:ownSenderRef},env.dependencies);
+  assert.equal(result.status,'RECORDED_LOCAL');
+  assert.equal(env.stats().presses,1);
+  assert.equal(env.stats().writes,1);
+  assert.equal(env.stats().readScopes.at(-1).dateTo,'2026-09-25');
+  assert.equal(env.stats().readScopes.at(-1).dateFrom,'2026-09-23');
+});
+
+test('paired uncertain reconciliation remains bounded and never replays an older intent',async()=>{
+  const old=oldRecord('UNCERTAIN');
+  old.scope.dateFrom='2020-01-01';
+  const env=environment({old});
+  const read=env.dependencies.readMessages;
+  env.dependencies.readMessages=async scope=>{
+    assert.ok((Date.parse(scope.dateTo)-Date.parse(scope.dateFrom))/86400000<=2);
+    return {...await read(scope),chatIdentity:{kind:'direct',knownNameUnique:true,globalNameUnique:true}};
+  };
+  await assert.rejects(sendPlainText(env.ui,{...args,chatType:'direct',expectedChatRef:chatRef,
+    expectedOwnSenderRef:ownSenderRef},env.dependencies),{code:'LINE_SEND_UNCERTAIN'});
+  assert.equal(env.stats().presses,0);assert.equal(env.stats().writes,0);assert.equal(env.stats().snapshots,0);
+});
+
+test('a truncated 30-record receipt page must overlap the pre-send tail',()=>{
+  const before={...baseline(),messages:[{sourceRef:'message:old',sourceTimestamp:Date.now()-100}]};
+  const after={...baseline(),messages:[...Array.from({length:29},(_,i)=>({sourceRef:`message:${i}`,text:'other'})),receipt()],
+    pagination:{hasMore:true}};
+  assert.equal(matchReceipt(before,after,message,Date.now()-100),null);
+  after.messages[0]=before.messages[0];
+  assert.ok(matchReceipt(before,after,message,Date.now()-100));
 });
 
 test('a chat switch after draft input refuses Return and records a staged draft',async()=>{
@@ -119,6 +164,41 @@ test('missing local identity or UI backend cannot reach LINE input',async()=>{
   assert.equal(missingBackend.stats().reads,1);
   assert.equal(missingBackend.stats().presses,0);
   assert.equal(missingBackend.stats().writes,0);
+});
+
+test('selected chat and account mismatch refuse before GUI and journal writes',async()=>{
+  for(const selected of [
+    {expectedChatRef:'chat:ffffffffffffffffffffffff'},
+    {expectedOwnSenderRef:'sender:ffffffffffffffffffffffff'},
+  ]) {
+    const env=environment();
+    await assert.rejects(sendPlainText(env.ui,{...args,...selected},env.dependencies),error=>
+      error.code===(selected.expectedChatRef?'CHAT_IDENTITY_CHANGED':'CHAT_ACCOUNT_CHANGED'));
+    assert.equal(env.stats().reads,1);
+    assert.equal(env.stats().snapshots,0);
+    assert.equal(env.stats().writes,0);
+    assert.equal(env.stats().journalWrites,0);
+    assert.equal(env.stats().presses,0);
+  }
+  const env=environment({identityError:Object.assign(new Error('duplicate name'),{code:'CHAT_AMBIGUOUS'})});
+  await assert.rejects(sendPlainText(env.ui,{...args,expectedChatRef:chatRef,
+    expectedOwnSenderRef:ownSenderRef},env.dependencies),{code:'CHAT_AMBIGUOUS'});
+  assert.equal(env.stats().journalWrites,0);
+  assert.equal(env.stats().snapshots,0);
+});
+
+test('selected refs remain bound through pre-Return and receipt reads',async()=>{
+  const env=environment();
+  const selected={expectedChatRef:chatRef,expectedOwnSenderRef:ownSenderRef};
+  const sent=await sendPlainText(env.ui,{...args,...selected},env.dependencies);
+  assert.equal(sent.status,'RECORDED_LOCAL');
+  assert.equal(env.stats().readScopes.length,3);
+  assert.equal(env.stats().readScopes[0].requireUniqueName,true);
+  assert.equal(env.stats().readScopes[1].requireUniqueName,true);
+  for(const scope of env.stats().readScopes){
+    assert.equal(scope.expectedChatRef,chatRef);
+    assert.equal(scope.expectedOwnSenderRef,ownSenderRef);
+  }
 });
 
 test('a post-Return chat switch still verifies an exact local receipt without replay',async()=>{
@@ -188,7 +268,7 @@ test('active catalogue is compact and versioned; legacy handlers remain callable
   assert.equal(extension.tools,ACTIVE_TOOL_DESCRIPTORS);
   const result=await extension.call('get_line_capabilities',{});
   const caps=JSON.parse(result.content[0].text);
-  assert.equal(caps.version,EXTENSION_VERSION);assert.equal(caps.toolCount,26);
+  assert.equal(caps.version,EXTENSION_VERSION);assert.equal(caps.toolCount,33);
   assert.deepEqual(caps.tools,extension.tools.map(tool=>tool.name));
   for(const name of ['prepare_line_group_chat','prepare_line_direct_chat','get_line_chatroom_history_short']){
     assert(!caps.tools.includes(name));assert(extension.handles(name));

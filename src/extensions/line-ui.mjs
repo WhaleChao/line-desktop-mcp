@@ -30,6 +30,7 @@ import { readLocalLineGuiChatIdentity, readLocalLineGuiCandidateIdentity,
 import { DirectChatProof } from './line-direct-proof.mjs';
 import { GroupChatProof } from './line-group-proof.mjs';
 import { sendPlainText, openExactChat, readPlainIdentity } from './line-plain-send.mjs';
+import { prepareBoundDirect } from './line-bound-direct.mjs';
 import { searchDirectCandidate, selectDirectCandidate, hasDirectGeometrySnapshot } from './line-direct-navigation.mjs';
 import { searchDirectCandidate as searchGroupCandidate,
   selectDirectCandidate as selectGroupCandidate } from './line-group-navigation.mjs';
@@ -409,6 +410,34 @@ export class LineUi {
     ));
   }
 
+  /** Internal forward adapter entry point: retain the existing unique local
+   * chat identity and fresh UI guard without exposing private proof records. */
+  async withForwardSourceChat(binding, callback) {
+    const source = binding?.source;
+    requireChat(source?.chatName);
+    requireChoice(source?.chatType, 'chatType', REPLY_CHAT_TYPES);
+    if (typeof callback !== 'function') throw new TypeError('callback must be a function.');
+    return this.#withVerifiedChat(source.chatName, async (api, inspected) => {
+      if (inspected.identity.chatRef !== source.chatRef) {
+        throw new LineToolError('LINE_FORWARD_SOURCE_STALE', 'The source chat identity changed. No forwarding action was taken.');
+      }
+      let current = inspected;
+      if (inspected.proof.kind === 'exact-top-level-window-title') {
+        await activateForegroundFeature(this.automation, inspected);
+        const refreshed = await inspectDetachedChat(api, source.chatName, { screenshot: true });
+        if (!refreshed || !sameTarget(refreshed.target, inspected.target)) {
+          throw new LineToolError('LINE_FORWARD_SOURCE_STALE', 'The exact detached source chat changed after activation.');
+        }
+        current = { ...refreshed, identity: inspected.identity,
+          proof: { ...refreshed.proof, chatType: inspected.identity.kind } };
+      }
+      const guard = this.#chatGuard(source.chatName, current, { expectedChatType: source.chatType });
+      const state = await snapshot(api, current.target, { screenshot: true });
+      await assertChatGuard(api, current.target, state, guard);
+      return callback(api, { ...current, state, guard });
+    }, { expectedChatType: source.chatType });
+  }
+
   /**
    * Bind a caller-observed source identity to a single point and rectangle in
    * the previously returned screenshot. Both the header and source crop must
@@ -694,13 +723,19 @@ export class LineUi {
     });
   }
 
-  async sendText({ chatName, message, autoSend = false, chatType = 'direct', idempotencyKey } = {}) {
+  async prepareSendTarget(args) {
+    return this.#run('ui-prepare-send-target', () => prepareBoundDirect(this,args));
+  }
+
+  async sendText({ chatName, message, autoSend = false, chatType = 'direct', idempotencyKey, expectedChatRef, expectedOwnSenderRef } = {}) {
     requireChat(chatName);
     requireText(message, 'message', 10_000);
     requireBoolean(autoSend, 'autoSend');
     requireChoice(chatType, 'chatType', REPLY_CHAT_TYPES);
     if(idempotencyKey!==undefined) requireText(idempotencyKey,'idempotencyKey',160);
-    return this.#run('ui-send-text', () => sendPlainText(this, { chatName, message, autoSend, chatType, idempotencyKey }));
+    if(expectedChatRef!==undefined && !/^chat:[0-9a-f]{24}$/u.test(expectedChatRef)) throw new LineToolError('LINE_INVALID_ARGUMENT', 'expectedChatRef must be an opaque chat reference.');
+    if(expectedOwnSenderRef!==undefined && !/^sender:[0-9a-f]{24}$/u.test(expectedOwnSenderRef)) throw new LineToolError('LINE_INVALID_ARGUMENT', 'expectedOwnSenderRef must be an opaque sender reference.');
+    return this.#run('ui-send-text', () => sendPlainText(this, { chatName, message, autoSend, chatType, idempotencyKey, expectedChatRef, expectedOwnSenderRef }));
   }
 
   async readLegacyHistory({ chatName, pageUpTimes = 10 } = {}) {
@@ -1537,8 +1572,17 @@ async function recognizeGroundedWindowImage(state, ocr, window) {
   const images = Array.isArray(state?.images) ? state.images : [];
   let selected;
   let expected;
+  let popupClientArea = false;
   if (window) {
     expected = windowBoundsFrame(window);
+    // Qt popup HWND bounds include a two-pixel non-client edge that the CUA
+    // screenshot omits. Accept only that measured inset on small popup menus.
+    popupClientArea = expected?.width <= 500 && expected?.height <= 500;
+    const matchesWindowImage = dimensions => dimensions
+      && (popupClientArea
+        ? dimensions.width <= expected.width && dimensions.width >= expected.width - 2
+          && dimensions.height <= expected.height && dimensions.height >= expected.height - 2
+        : dimensions.width === expected.width && dimensions.height === expected.height);
     const roots = (Array.isArray(state?.elements) ? state.elements : []).filter(element => {
       const frame = elementFrame(element);
       return normalized(element?.role) === 'window' && frame && expected
@@ -1548,7 +1592,7 @@ async function recognizeGroundedWindowImage(state, ocr, window) {
     const matching = images.filter(image => {
       try {
         const dimensions = ocr.imageDimensions(image);
-        return dimensions?.width === expected.width && dimensions?.height === expected.height;
+        return matchesWindowImage(dimensions);
       } catch {
         return false;
       }
@@ -1561,9 +1605,11 @@ async function recognizeGroundedWindowImage(state, ocr, window) {
   }
   if (!selected || typeof selected !== 'object') return undefined;
   try {
-    const recognized = await ocr.recognizeImage(selected);
+    const recognized = await ocr.recognizeImage(selected,
+      popupClientArea ? { upscaleFactor: 3 } : undefined);
     return validGroundedOcr(recognized)
-      && (!expected || (recognized.width === expected.width && recognized.height === expected.height))
+      && (!expected || (recognized.width === ocr.imageDimensions(selected).width
+        && recognized.height === ocr.imageDimensions(selected).height))
       ? recognized : undefined;
   } catch {
     // OCR is only a conservative fallback. Its unavailability cannot turn an
@@ -1983,7 +2029,12 @@ function replySourceVisualView(state, window, guard, visual, { includeComposer =
   const elements = Array.isArray(state?.elements) ? state.elements : [];
   if (elements.some(element => hasMarker(element, MODAL_MARKERS)
     || ['menu', 'menuitem', 'menu-item'].includes(normalized(element?.role)))) return undefined;
-  const bands = findMainChatBands(state);
+  const bands = guard?.kind === 'detached-title'
+    ? findContentHeaderBands(state).filter(band => normalized(band.pane?.role) === 'group'
+      && band.paneFrame.width === window?.bounds?.width
+      && band.bodyFrame.height > window.bounds.height / 2
+      && findContentHeaderContainer(state, band))
+    : findMainChatBands(state);
   if (bands.length !== 1) return undefined;
   const band = bands[0];
   const rootFrame = findScreenshotRootFrame(state, window, band);
@@ -1993,6 +2044,7 @@ function replySourceVisualView(state, window, guard, visual, { includeComposer =
     let composer;
     try {
       composer = findComposer(state, {
+        allowDetachedFallback: guard?.kind === 'detached-title',
         allowMainStructuralFallback: isVerifiedMainChatGuard(guard),
         guard,
       });
@@ -2225,7 +2277,7 @@ function createChatGuard(chatName, inspected, ocr, visual, { expectedChatType } 
 }
 
 function chatGuardNeedsScreenshot(guard) {
-  return guard?.kind === 'scoped-direct-context' || guard?.kind === 'scoped-group-context'
+  return guard?.kind === 'bound-direct-context' || guard?.kind === 'scoped-direct-context' || guard?.kind === 'scoped-group-context'
     || guard?.kind === 'ocr-main-header' || guard?.kind === 'visual-main-header-crop';
 }
 
@@ -2234,7 +2286,9 @@ async function assertChatGuard(api, target, state, guard) {
   if (!sameTarget(target, guard.target)) {
     throw new LineToolError('LINE_CHAT_STALE', 'The selected LINE target changed before the action. No action was taken.');
   }
-  if (guard.kind === 'scoped-group-context') {
+  if (guard.kind === 'bound-direct-context') {
+    return guard.verify(state);
+  } else if (guard.kind === 'scoped-group-context') {
     return guard.verify(state, guard.headerOnly === true);
   } else if (guard.kind === 'scoped-direct-context') {
     await guard.verify(state, guard.headerOnly === true);
@@ -3124,7 +3178,7 @@ async function menuItemTarget(state, labels, description, code, priorProof, ocr,
   if (!pixel) {
     throw new LineToolError(code, `${description}: OCR did not provide a bounded click point.`);
   }
-  return { pixel };
+  return { pixel: { x: Math.round(pixel.x), y: Math.round(pixel.y) } };
 }
 
 async function newlyVisibleOcrLabel(before, after, labels, ocr) {
@@ -3811,4 +3865,4 @@ function withoutImages(value) {
 }
 
 // Shared plain-text path reuses the existing UI selectors.
-export { inspectMainChat, inspectDetachedChat, createChatGuard, composerOptions, readComposer, writeDraft, runUiInput, findComposer, findMainChatBands, findContentHeaderContainer };
+export { inspectMainChat, inspectDetachedChat, createChatGuard, composerOptions, readComposer, writeDraft, runUiInput, findComposer, findMainChatBands, findContentHeaderContainer, resolveOpenedMenu, menuItemTarget, replySourceVisualView };

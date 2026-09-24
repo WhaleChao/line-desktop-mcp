@@ -1,14 +1,14 @@
-# Windows tool contract — v3.2.0
+# Windows tool contract — v3.3.0
 
-[Overview](README.en.md) · [Installation](quickstart-windows.md) · [Upgrade to v3.2.0](MIGRATING.md#upgrading-to-v320) · [Release notes](releases/README.md)
+[Overview](README.en.md) · [Installation](quickstart-windows.md) · [Upgrade to v3.3.0](MIGRATING.md#upgrading-to-v330) · [Release notes](releases/README.md)
 
-LINE Agent MCP is the display name of the Windows community edition in `bensonmaxai/line-desktop-mcp`. v3.2.0 retains v3 named-chat identity checks and adds scoped dated MCP reads and local send receipts. The MCP server/package identity remains `line-desktop-mcp`. It is an unofficial local bridge to a signed-in LINE Desktop.
+LINE Agent MCP is the display name of the Windows community edition in `bensonmaxai/line-desktop-mcp`. v3.3.0 adds selected recipient/account binding, recent-chat metadata and original-message forwarding to the scoped reader and local send receipts. The MCP server/package identity remains `line-desktop-mcp`. It is an unofficial local bridge to a signed-in LINE Desktop.
 
 ## Connection and compatibility
 
 Node.js 24 LTS or newer is required. The server exposes local **stdio only**; no HTTP/REST entry point, server listener, MCPB bundle or startup installer is included. Former HTTP CLI flags fail before startup. Configuration is inherited explicitly from the MCP client; a cwd `.env` is not automatically loaded. Distribution uses a GitHub source tag and attached `.tgz`; the npm registry is not updated by this release.
 
-Windows with `LINE_MCP_EXTENSIONS=1` lists 26 active tools. Five legacy aliases remain callable but hidden from the list, for 31 implemented descriptors. Without extensions, five default descriptors remain. Every Windows named-chat GUI path, including the defaults, requires configured CUA and the Python/SQLite3MC local reader. macOS lists the five defaults but refuses legacy reads/sends before automation with `LINE_CHAT_VERIFICATION_UNAVAILABLE`. The Windows reader is not a macOS feature; see [migration notes](MIGRATING.md#upgrading-to-v320).
+Windows with `LINE_MCP_EXTENSIONS=1` lists 33 active tools. Five legacy aliases remain callable but hidden from the list, for 38 implemented descriptors. Without extensions, five default descriptors remain. Every Windows named-chat GUI path, including the defaults, requires configured CUA and the Python/SQLite3MC local reader. macOS lists the five defaults but refuses legacy reads/sends before automation with `LINE_CHAT_VERIFICATION_UNAVAILABLE`. The Windows reader is not a macOS feature; see [migration notes](MIGRATING.md#upgrading-to-v330).
 
 ## Context with images
 
@@ -44,6 +44,7 @@ Bounded key discovery uses a short-lived process-specific locator hint. The hint
 | Purpose | Tool names |
 | --- | --- |
 | Local text/image context | `get_line_local_messages` |
+| Recent recipients and readiness | `list_line_recent_chats`, `check_line_send_target`, `prepare_line_send_target` |
 | Scoped or loaded history | `get_line_chat_messages`, `search_line_chat_messages`, `verify_line_message`, `export_line_chat_history` |
 | Capabilities and plans | `get_line_capabilities`, `get_line_workflow`, `prepare_line_workflow`, `get_line_status` |
 | Chat/UI identity | `open_line_chat`, `get_line_ui_state`, `confirm_line_chat_view`, `open_line_chat_feature` |
@@ -51,6 +52,7 @@ Bounded key discovery uses a short-lived process-specific locator hint. The hint
 | Text/file staging and sending | `send_message_manual`, `send_message_auto`, `send_file_manual` |
 | Quoted source | `get_line_reply_source_target`, `confirm_line_reply_source_target`, `stage_line_reply` |
 | Other message actions | `copy_line_message`, `translate_line_message`, `stage_line_forward` |
+| Reviewed original-message forwarding | `prepare_line_forward`, `confirm_line_forward`, `verify_line_forward`, `cancel_line_forward` |
 | Already-open poll | `get_line_poll_state` |
 
 Legacy aliases `prepare_line_direct_chat`, `prepare_line_group_chat`,
@@ -77,6 +79,35 @@ send or GUI operations.
 
 v3.0.0 verifies the exact main LINE chat before and after every legacy scroll/copy child. Detached windows and identity drift refuse; copied text is discarded before a tool result, export, or optional history log is produced. Copied text must be owned by the bound LINE process. The clipboard helper snapshots the prior available formats and restores them before returning only when its owned sequence is unchanged. A foreign update is preserved and the history read refuses. Clipboard History and listeners can retain the transient copy, `ClipboardAll` can omit unavailable formats, and a small race remains between the final sequence comparison and restoration.
 
+## Selected recipients and direct readiness
+
+`list_line_recent_chats` takes `days:14` or `days:30`, optional literal name
+`query`, and `limit` up to 50. It reads activity metadata, not message text or
+media. Each result retains its opaque chat identity; same-name rows are not
+merged. The list is not send approval or GUI proof.
+
+`check_line_send_target` takes the exact name and direct/group kind. Name-only
+checks retain global uniqueness, including unopened contacts. Direct checks
+with both `expectedChatRef` and `expectedOwnSenderRef` can resolve one unique
+existing chat even when unopened same-name contacts exist. The result is
+`IDENTITY_UNIQUE`, `IDENTITY_BOUND_REQUIRES_UI`, or an expected identity
+`BLOCKED` result. Operational failures remain MCP errors.
+
+`prepare_line_send_target` takes that exact direct name and both refs. It only
+inspects an already-open exact titled window and at most 30 metadata-only
+messages from the current and previous two Taipei dates. It requires two
+distinct newest text records on one date, matched independently against visible
+full text, date, minute and direction, plus a fresh empty composer. Adjacent
+same-direction messages may share one visible minute only when their local
+dates/minutes agree. Changed pixels, account, chat, draft or local context
+refuse. `READY` does not type, send, authorize input or create reusable proof.
+
+Paired `send_message_auto` repeats that proof for the collision case. Globally
+unique targets keep automatic opening; ordinary name-only callers keep their
+existing uniqueness requirements. Callers must obtain user approval for the
+specific send. Optional refs on `get_line_local_messages` also reject a changed
+chat/account before selecting message rows.
+
 ## Reply and action boundaries
 
 For an ordinary reply, the assistant reads the authorized recent context,
@@ -101,10 +132,19 @@ In v3.0.0, source observations contain only the verified message-area crop, whos
 
 `send_file_manual` binds the verified main or detached chat HWND, PID, and
 title, opens the picker with Ctrl+O, and stages a path there. Clicking Open
-is the actual upload/send step and needs the user's approval. Forwarding,
-shared notes/albums, reactions, recall, calls and membership changes have
+is the actual upload/send step and needs the user's approval. Shared
+notes/albums, reactions, recall, calls and membership changes have
 separate guided UI workflows and action boundaries. Uncertain sends are not
 automatically replayed.
+
+Original-message forwarding has separate prepare/confirm/verify/cancel tools.
+Preparation binds one exact source, current account and one recipient; final
+confirmation must refer to the same reviewed operation. A durable intent is
+written before the final native Share input. Uncertain dispatch is verified
+without another send, and restart invalidates old preparation tokens.
+Cancellation only applies before dispatch; it does not recall a sent message.
+Attachment filename/size matches are limited local evidence, not byte identity
+or recipient delivery. Custom-drawn or ambiguous source/recipient UI may refuse.
 
 The shared `~/.line-desktop-mcp/operation.lock` serializes supported bridge UI operations across old/new installs. It does not prevent a human or unrelated program from changing LINE. After interference, reobserve and verify; do not reuse old screenshot indices or confirmation tokens.
 
@@ -114,22 +154,35 @@ Local reads require Python x64 plus cryptography and Pillow, `LINE_MCP_PYTHON`, 
 
 Every named-chat GUI operation requires `LINE_MCP_CUA_DRIVER` plus the
 configured `LINE_MCP_PYTHON` and pinned `LINE_MCP_SQLITE3MC_DLL`, including
-the five default Windows tools. Before any CUA LINE-window listing/state
-read/input or AHK/clipboard activity, a fresh metadata-only lookup must
-return one complete unique local identity. It covers an exact raw group name
+the five default Windows tools. Before GUI access, a fresh local lookup must
+bind one complete unique identity. Ordinary paths use metadata only; the
+paired direct exception additionally reads bounded recent context. The
+ordinary lookup covers an exact raw group name
 or exact effective contact name with an existing direct-chat row, reads no
 messages or media, and accepts no NFC, whitespace, or member-count alias.
-Contact-name collisions fail closed even if one candidate has no chat row.
+Name-only contact collisions fail closed even if one candidate has no chat row.
+The paired direct exception described above additionally reads bounded recent
+context and requires independent visible proof; it never picks an arbitrary
+same-name chat or weakens existing-chat/name-family collision checks.
 Plain-text send refreshes the identity immediately before Return. Missing,
 incomplete, cross-type, or ambiguous identity refuses without fallback.
 
-Tool/capability metadata remains callable without chat-identity proof, and `get_line_status` preserves independent local-reader status when GUI status is unavailable. Pure local DB history needs its reader prerequisites but no CUA. The poll reader retains its documented local-group identity and CUA prerequisites. Local snapshot uniqueness plus a fresh UI header is not an atomic database-ID-to-UI mapping; concurrent rename/create activity remains a race, so retry only after LINE state settles. AutoHotkey uses `LINE_MCP_AUTOHOTKEY` or the standard Program Files v2 executable, with literal argv and no shell/PATH lookup. The driver is called through its public stdio MCP interface. No always-on service is installed by this package.
+Tool/capability metadata remains callable without chat-identity proof, and `get_line_status` preserves independent local-reader status when GUI status is unavailable. Pure local DB history needs its reader prerequisites but no CUA. The poll reader retains its documented local-group identity and CUA prerequisites. Local and GUI observations are not an atomic database-ID-to-UI mapping; concurrent rename/create activity remains a race, so retry only after LINE state settles. AutoHotkey uses `LINE_MCP_AUTOHOTKEY` or the standard Program Files v2 executable, with literal argv and no shell/PATH lookup. The driver is called through its public stdio MCP interface. No always-on service is installed by this package.
 
 Reader scratch state lives under `%LOCALAPPDATA%/line-desktop-mcp/line-reader`; encrypted snapshots are cleaned up after use. Locator hints contain no key or chat text. AHK operations use unique temporary script files and remove them on normal completion/failure; an interrupted process can leave temporary files. Optional `CHAT_LOG_ON=true` explicitly writes plaintext legacy-history logs, so leave it off unless a user has requested that export behavior.
 
 Decoding/OCR are local. Tool results, including images, may be sent to the AI provider used by the client. A local bridge therefore does not imply that all processing is offline. Read only authorized named chats; do not post chat contents, account identifiers, keys, raw database files or unredacted traces in issues. [Licenses and platform terms](THIRD_PARTY.md)
 
 ## Verification
+
+v3.3.0 reuses the live-tested local.4 runtime: bound preparation, changed
+chat/account refusals and one approved plain-text send with a new own exact-text
+local record. Synthetic-attachment forwarding and subsequent guided recall
+were also exercised. The recorded run used Windows LINE 26.4.2.3957 and CUA
+Driver 0.28.2. Node: 349 passed. Python: 135 run, 127 passed, eight skipped.
+The preparation observation took about 5.6 seconds on the test machine.
+See [v3.3.0 limitations](releases/v3.3.0.en.md); no recipient delivery/read
+claim or general latency guarantee follows from these checks.
 
 Historical v3.0.0 pre-release security verification recorded 221/221 Node checks, 101 passing
 Python checks plus one symlink-related

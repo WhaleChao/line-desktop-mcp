@@ -62,7 +62,7 @@ function fixture(raw = history, options = {}) {
 test('tool catalogue is unique, closed-schema and exposes six compatible legacy names', () => {
   const names = LINE_TOOL_DESCRIPTORS.map(item => item.name);
   assert.equal(names.length, new Set(names).size);
-  assert.equal(names.length, 31);
+  assert.equal(names.length, 38);
   for (const name of ['get_line_chatroom_history_short', 'get_line_chatroom_history_default', 'get_line_chatroom_history_long', 'send_message_manual', 'send_message_auto', 'send_file_manual']) assert.ok(names.includes(name));
   for (const item of LINE_TOOL_DESCRIPTORS) assert.equal(item.inputSchema.additionalProperties, false);
 });

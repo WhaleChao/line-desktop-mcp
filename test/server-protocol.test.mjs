@@ -79,14 +79,14 @@ test('default history and manual send use the original handlers and response sha
   ]);
 });
 
-test('opt-in exposes 26 active unique tools and validates history before any automation', async t => {
+test('opt-in exposes 33 active unique tools and validates history before any automation', async t => {
   const { client, calls } = await connect(t, { extensionsEnabled: true, runtimePlatform: 'win32' });
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 26);
-  assert.equal(new Set(tools.map(tool => tool.name)).size, 26);
+  assert.equal(tools.length, 33);
+  assert.equal(new Set(tools.map(tool => tool.name)).size, 33);
   assert.ok(tools.some(tool => tool.name === 'send_file_manual'));
   const capabilities = body(await client.callTool({ name: 'get_line_capabilities', arguments: {} }));
-  assert.equal(capabilities.capabilities.length, 35);
+  assert.equal(capabilities.capabilities.length, 38);
   const chatOpen = capabilities.capabilities.find(capability => capability.id === 'chat_open');
   assert.match(chatOpen.name, /開啟或沿用/u);
   assert.match(chatOpen.limit, /checks the final exact title/u);

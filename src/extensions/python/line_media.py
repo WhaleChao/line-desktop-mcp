@@ -5,6 +5,7 @@ import hmac
 import io
 from pathlib import Path
 import re
+import unicodedata
 import warnings
 import wave
 from PIL import Image
@@ -357,6 +358,16 @@ def find_original(directory, material, declared_bytes, declared_dimensions, *, r
         return {'state':'not_cached'}
 
 
+def _safe_attachment_name(value):
+    """Return only a bounded display basename from LINE's stored contentInfo."""
+    if (not isinstance(value,str) or not 1 <= len(value) <= 255
+            or value != value.strip() or value in ('.','..')
+            or any(char in value for char in ('/','\\',':'))
+            or any(unicodedata.category(char) == 'Cc' for char in value)):
+        return None
+    return value
+
+
 def inspect_attachment(kind,metadata,info,source_ref,cache_root,chat_id):
     result = {'state':'not_applicable' if kind == 0 else 'not_resolved',
               'metadata':metadata_shape(metadata),'info':metadata_shape(info)}
@@ -387,6 +398,9 @@ def inspect_attachment(kind,metadata,info,source_ref,cache_root,chat_id):
                                'length':len(filename) if isinstance(filename,str) else None,
                                'isAbsolute':Path(filename).is_absolute() if isinstance(filename,str) else False,
                                'suffix':Path(filename).suffix if isinstance(filename,str) else None}
+    safe_name = _safe_attachment_name(filename)
+    if safe_name is not None:
+        result['fileName'] = safe_name
     if isinstance(meta_obj,dict):
         try:
             result['declaredFileBytes'] = int(meta_obj.get('FILE_SIZE',0))

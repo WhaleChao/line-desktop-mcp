@@ -117,7 +117,7 @@ test('Windows fresh stdio startup is noninteractive without AutoHotkey and serve
   skip: process.platform !== 'win32' ? 'Windows-only startup regression' : false,
   timeout: 15_000,
 }, async t => {
-  for (const [extensionsEnabled, expectedToolCount] of [[false, 5], [true, 26]]) {
+  for (const [extensionsEnabled, expectedToolCount] of [[false, 5], [true, 33]]) {
     const server = await startIsolatedServer(t, extensionsEnabled);
     const tools = await within(server.client.listTools(), startupTimeoutMs, 'list static tool metadata');
 

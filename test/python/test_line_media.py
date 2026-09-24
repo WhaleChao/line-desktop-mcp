@@ -363,6 +363,20 @@ class MediaTests(unittest.TestCase):
         self.assertNotIn('private-package',json.dumps(result))
         self.assertNotIn('private-text',json.dumps(result))
 
+    def test_attachment_name_exposes_only_a_safe_stored_basename(self):
+        root = TMP_ROOT / 'synthetic-forward-name-cache'
+        result = inspect_attachment(14,None,json.dumps({'fileName':'報價單 9月.pdf'}),
+                                    'message:synthetic',root,'synthetic-chat')
+        self.assertEqual(result['fileName'],'報價單 9月.pdf')
+        self.assertEqual(result['state'],'layout_unavailable')
+        for unsafe in ('','.', '..','../secret.pdf','..\\secret.pdf','C:\\secret.pdf',
+                       '/secret.pdf','folder/secret.pdf','folder\\secret.pdf',
+                       'file:stream','bad\x00name','bad\nname','bad\x7fname',
+                       ' trailing.pdf ', 'a'*256):
+            result = inspect_attachment(14,None,json.dumps({'fileName':unsafe}),
+                                        'message:synthetic',root,'synthetic-chat')
+            self.assertNotIn('fileName',result,unsafe)
+
 
 if __name__ == '__main__':
     unittest.main()

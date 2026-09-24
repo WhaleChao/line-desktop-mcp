@@ -8,7 +8,9 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[v3.2.0 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[v3.3.0 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+
+**v3.3.0 — 收件人綁定與原訊息轉發：** 新增最近聊天室清單、收件人預檢及轉發核對。既有直聊不再單純被未聊天的同名好友擋住，而是綁定聊天室／帳號，再以實際畫面核對；名稱唯一的對象保留原本快速流程。結果不確定仍不自動重送。[更新與實測界線](docs/releases/v3.3.0.zh-TW.md)
 
 **v3.2.0 — 普通文字傳送與本機回執：** 指定聊天室與本人身分核對後，單次操作最多 30 秒，並查核新產生的本人本機訊息。`RECORDED_LOCAL` 不代表對方收到或已讀；結果不確定時以相同 `idempotencyKey` 唯讀重查，不自動重送。指定日期的讀取／搜尋／匯出／核對共用本機讀取器；未指定日期仍讀介面已載入歷史。Windows 擴充清單顯示 26 個工具，另有 5 個隱藏但仍可呼叫的舊別名。[詳見更新說明](docs/releases/v3.2.0.zh-TW.md)
 
@@ -19,7 +21,7 @@
 
 這是 **LINE Agent MCP**，由 [bensonmaxai](https://github.com/bensonmaxai/line-desktop-mcp) 維護的 Windows 社群版，建立在 [dtwang/line-desktop-mcp](https://github.com/dtwang/line-desktop-mcp) 之上。透過本機 MCP 連接已登入的 LINE Desktop，日常以 Codex 使用，也能搭配其他支援本機 MCP 的客戶端。本專案與 LINE 官方無關。
 
-Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後列出 **26 個目前使用的工具**，另有 **5 個可呼叫但不列出的舊別名**。未啟用時列出 **5 個工具**。macOS 也列出五個預設工具，但讀取／發送功能不可用。
+Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後列出 **33 個目前使用的工具**，另有 **5 個可呼叫但不列出的舊別名**。未啟用時列出 **5 個工具**。macOS 也列出五個預設工具，但讀取／發送功能不可用。
 
 **v3.0.0 安全更新：** Windows 所有指定聊天室的 GUI 操作（含預設五工具）都需要 CUA 與本機讀取器。先用不讀訊息的本機中繼資料核對唯一聊天室，再驗證已開啟的 LINE 標頭；不再自動點搜尋第一筆。macOS 讀取／發送目前會在自動化前拒絕。引用截圖限定指定聊天室、APNG 僅輸出首幀；GUI 歷史複製在沒有其他寫入者介入時恢復先前剪貼簿。[更新說明](docs/releases/v3.0.0.zh-TW.md) · [升級與回退](docs/MIGRATING.md#upgrading-to-v300)
 
@@ -46,7 +48,7 @@ Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後列出 **26 個目前使用的工具**
 ## 安裝與升級
 
 ```powershell
-git clone --branch v3.2.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { parseLineHistory, selectLineMessages, formatLineHistory } from './line-history.mjs';
 import { LINE_CAPABILITIES, LINE_SOURCES, LINE_WORKFLOWS } from './line-capabilities.mjs';
 import { LineUi } from './line-ui.mjs';
-import { readLocalLineMessages, readLocalLineChatIdentity, validateLocalScope } from './line-local-reader.mjs';
+import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDirectIdentity, readLocalLineRecentChats, validateLocalScope } from './line-local-reader.mjs';
 import { readOpenLinePollState } from './line-poll-reader.mjs';
 import { readLineClientStatus } from './line-client-status.mjs';
 import { LINE_WORKFLOW_PLAN_PROPERTIES, LINE_WORKFLOW_PLAN_SCHEMA, prepareLineWorkflow } from './line-workflow-plan.mjs';
@@ -12,6 +12,10 @@ import { reconcileLineSources } from './line-source-reconciliation.mjs';
 import { requireReplySource } from './line-quote-binding.mjs';
 import { LineToolError, requireChat, requireText, runtimeRequire, toolResult, toolError } from './line-runtime.mjs';
 import { validateExportPath, writeVerifiedExport } from './line-export.mjs';
+import { LINE_FORWARD_TOOL_DESCRIPTORS } from './line-forward-tools.mjs';
+import { createForwardTransaction } from './line-forward-transaction.mjs';
+import { createForwardUi } from './line-forward-ui.mjs';
+import { checkLineSendTarget } from './line-send-target.mjs';
 export { validateExportPath } from './line-export.mjs';
 
 export const EXTENSION_VERSION = runtimeRequire()('./package.json').version;
@@ -77,6 +81,22 @@ function descriptor(name, description, properties, required = [], annotations = 
 }
 
 export const LINE_TOOL_DESCRIPTORS = [
+  ...LINE_FORWARD_TOOL_DESCRIPTORS,
+  descriptor('check_line_send_target', 'Read only exact local chat identity. Name-only checks include cross-kind and unopened-contact collisions. With both expectedChatRef and expectedOwnSenderRef for a direct chat, a unique existing identity returns IDENTITY_BOUND_REQUIRES_UI when unopened names collide, otherwise IDENTITY_UNIQUE; expected identity refusals return BLOCKED. Reads no messages, performs no GUI action and never sends. This is not send approval or UI/draft/network readiness; bound collisions require independent GUI preparation and send-time rechecks.', {
+    chatName: chat, chatType: { type: 'string', enum: ['direct', 'group'] },
+    expectedChatRef: { type: 'string', pattern: '^chat:[0-9a-f]{24}$' },
+    expectedOwnSenderRef: { type: 'string', pattern: '^sender:[0-9a-f]{24}$' },
+  }, ['chatName', 'chatType'], readOnly, {allOf:[{if:{required:['expectedOwnSenderRef']},then:{required:['expectedChatRef'],properties:{chatType:{const:'direct'}}}}]}),
+  descriptor('prepare_line_send_target', 'Inspect an already-open exact titled direct chat using paired opaque chat/account refs, two latest local text records from the current and previous two Taipei dates, independent visible date/minute/direction/text evidence, and an empty composer. At most 30 metadata-only records. Unopened same-name contacts are allowed only when the existing chat identity is unique. Returns READY or an error without input, staging or sending. This is a current readiness observation, never send approval or a reusable proof; send_message_auto repeats its checks.', {
+    chatName:chat,chatType:{type:'string',const:'direct'},
+    expectedChatRef:{type:'string',pattern:'^chat:[0-9a-f]{24}$'},
+    expectedOwnSenderRef:{type:'string',pattern:'^sender:[0-9a-f]{24}$'},
+  }, ['chatName','chatType','expectedChatRef','expectedOwnSenderRef']),
+  descriptor('list_line_recent_chats', 'List direct and group chat names active in the last 14 or 30 Taipei calendar days from local encrypted snapshot metadata. Returns opaque chat refs and last activity times only, without message text, media, or GUI actions. Same-name chats remain separate. A listed chat is not send-target proof; check exact identity again before any action.', {
+    days: { type: 'integer', enum: [14, 30] },
+    query: { type: 'string', minLength: 1, maxLength: 100, description: 'Case-insensitive literal substring of effective chat name.' },
+    limit: { type: 'integer', minimum: 1, maximum: 50, default: 50 },
+  }, ['days']),
   descriptor('prepare_line_direct_chat', 'Prepare one exact authorized direct chat using bounded search, header and recent incoming text or file evidence. At verify, put each visible file\'s complete filename in text and mark it kind:file. If either newest message is a file, mark kind:text or kind:file on every visible message; a missing kind refuses. With text-only context, omitted kind means text. Do not use clipped filenames or guessed values. Search may focus LINE and opening may mark it read. Pass only observations from each returned image. One-use tokens and fresh local/pixel checks bind every phase. Never stages or sends; final exact-text user approval remains separate. Receipt is read-only and available only after an acknowledged send in this process.', {
     chatName:chat,stage:{type:'string',enum:['search','open','context','verify','receipt']},
     dateFrom:isoDate,dateTo:isoDate,messageLimit:{type:'integer',minimum:2,maximum:30},
@@ -89,6 +109,8 @@ export const LINE_TOOL_DESCRIPTORS = [
   }, ['chatName','stage'], uiOnly),
   descriptor('get_line_local_messages', 'Read one exact authorized group or direct chat from bounded local DB/WAL copies, at most 31 days. Default local-only metadata mode reads text and attachment metadata without GUI or media decoding. Returns snapshot freshness, source refs and a nextCursor for older pages. Reuse cursor only with the same chat/date/query; each page uses a new snapshot. Request mediaMode:preview, optionally with mediaSourceRefs from that page, to decode cached supported images or validated WAV audio within a response budget. Missing/deferred/rejected media is explicit. compareWithUi:true adds ONE short GUI read (may focus LINE and mark read), with bidirectional differences and scope/timing caveats; never action identity or delivery proof. No automatic GUI fallback or retry.', {
     chatName: chat, dateFrom: isoDate, dateTo: isoDate,
+    expectedChatRef: { type: 'string', pattern: '^chat:[0-9a-f]{24}$', description: 'Bind this read to a selected opaque chat reference; mismatch refuses before message rows.' },
+    expectedOwnSenderRef: { type: 'string', pattern: '^sender:[0-9a-f]{24}$', description: 'Bind this read to the selected LINE account; unknown or changed account refuses before message rows.' },
     chatType: { type: 'string', enum: ['auto', 'group', 'direct'], default: 'auto', description: 'Exact effective name lookup across groups and existing direct contacts. Same-name collisions refuse; select a kind only when authorized. Keep unchanged when paging.' },
     messageLimit: { ...bounds.messageLimit, default: 200 },
     query: { type: 'string', minLength: 1, maxLength: 1000 },
@@ -103,7 +125,7 @@ export const LINE_TOOL_DESCRIPTORS = [
     `Read ${size} bounded history from one named LINE chat. Enforces an explicit date and messageLimit after parsing. Without date returns recent loaded messages across dates. Reports incomplete/unknown parsing; not a complete archive. Opening a chat can mark it read.`,
     { chatName: chat, date: isoDate, messageLimit: bounds.messageLimit }, ['chatName'], uiOnly)),
   descriptor('send_message_manual', 'Stage literal text for review inside LINE only when the user requests in-LINE staging. For ordinary replies first show the draft in Codex. Never sends; a staged acknowledgment still needs visual review.', { chatName: chat, message: text, chatType:textChatType }, ['chatName', 'message'], uiOnly),
-  descriptor('send_message_auto', 'Send approved plain text once and verify a new own local DB record in this call; no prepare or separate receipt call needed. RECORDED_LOCAL is local proof, not recipient delivery/read proof. UNCERTAIN retries only check the earlier operation. Reuse idempotencyKey for retries; without a key, identical text reuses its recorded result. A new intended repeat needs a new key. May open a titled chat window and focus LINE.', { chatName: chat, message: text, chatType:textChatType, idempotencyKey:{type:'string',minLength:1,maxLength:160} }, ['chatName', 'message'], uiOnly),
+  descriptor('send_message_auto', 'Send approved plain text once and verify a new own local DB record in this call. Optional expectedChatRef and expectedOwnSenderRef bind a prior selection before GUI input. Name-only sends require global uniqueness. Paired direct sends may use a unique existing chat despite unopened same-name contacts only with independent recent visible context in an already-open titled window; globally unique targets retain automatic opening. RECORDED_LOCAL is local proof, not recipient delivery/read proof. UNCERTAIN retries only check the earlier operation. Reuse idempotencyKey for retries; identical text without a key reuses its recorded result. A new intended repeat needs a new key. May focus LINE.', { chatName: chat, message: text, chatType:textChatType, idempotencyKey:{type:'string',minLength:1,maxLength:160}, expectedChatRef:{type:'string',pattern:'^chat:[0-9a-f]{24}$'}, expectedOwnSenderRef:{type:'string',pattern:'^sender:[0-9a-f]{24}$'} }, ['chatName', 'message'], uiOnly),
   descriptor('send_file_manual', 'Stage an explicitly approved local file in the named LINE chat picker. Does not click Open or send. Clicking Open is the actual send/upload boundary. Inspect the filename and target before approval/confirmation.', { chatName: chat, filePath: { type: 'string', minLength: 1, maxLength: 4096 }, optionalMessage: draft }, ['chatName', 'filePath'], uiOnly),
   descriptor('get_line_capabilities', 'List this bridge’s direct tools, UI-dependent tools, guided workflows and unavailable Windows features. Includes limitations and verification levels; supported by LINE is not the same as live-tested in this bridge.', { mode: { type: 'string', enum: ['all', 'direct', 'uia', 'guided_ui', 'unavailable_windows'], default: 'all' } }),
   descriptor('get_line_workflow', 'Get the local execution and verification checklist for a LINE visual workflow. This tool provides guidance only; it never creates a poll, album, note, reaction, call, mention or message.', { workflow: { type: 'string', enum: Object.keys(LINE_WORKFLOWS) } }, ['workflow']),
@@ -255,7 +277,7 @@ const LEGACY_TOOL_NAMES = new Set(['prepare_line_direct_chat', 'prepare_line_gro
   'get_line_chatroom_history_short', 'get_line_chatroom_history_default', 'get_line_chatroom_history_long']);
 export const ACTIVE_TOOL_DESCRIPTORS = LINE_TOOL_DESCRIPTORS.filter(tool => !LEGACY_TOOL_NAMES.has(tool.name));
 
-export function createLineExtensions(automation, { ui, now = () => new Date(), fileSystem = fs, localReader = readLocalLineMessages, localIdentityReader = readLocalLineChatIdentity, pollReader = readOpenLinePollState, clientStatus = readLineClientStatus } = {}) {
+export function createLineExtensions(automation, { ui, now = () => new Date(), fileSystem = fs, localReader = readLocalLineMessages, localIdentityReader = readLocalLineChatIdentity, boundIdentityReader = readLocalLineBoundDirectIdentity, recentReader = readLocalLineRecentChats, pollReader = readOpenLinePollState, clientStatus = readLineClientStatus, forwardTransaction } = {}) {
   ui ??= typeof automation?.getVerifiedUi === 'function'
     ? automation.getVerifiedUi()
     : new LineUi({ automation });
@@ -263,6 +285,10 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
   const ajv = new Ajv({ allErrors: true, strict: false });
   const schemas = new Map(LINE_TOOL_DESCRIPTORS.map(item => [item.name, item.inputSchema]));
   const validators = new Map();
+  const forwards = () => forwardTransaction ??= createForwardTransaction({
+    ui: createForwardUi(ui), readMessages: localReader, readIdentity: localReader,
+    now: () => now().valueOf(),
+  });
 
   async function readUiMessages(args, forcedSize) {
     requireChat(args.chatName);
@@ -322,6 +348,13 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
   }
 
   const handlers = {
+    check_line_send_target: args => checkLineSendTarget(args, { readIdentity: localIdentityReader, readBoundIdentity:boundIdentityReader, now }),
+    prepare_line_send_target: async args => {
+      try { return await ui.prepareSendTarget(args); }
+      catch(error) { throw new LineToolError(error?.code || 'LINE_PREPARE_FAILED',
+        'The selected direct chat is not ready for input.',{status:'NOT_READY',sendDispatched:false}); }
+    },
+    list_line_recent_chats: args => recentReader(args),
     get_line_poll_state: async args => {
       const date = new Date(now().valueOf() + 28800000).toISOString().slice(0, 10);
       const identity = await localIdentityReader({ chatName: args.chatName, chatType: 'group',
@@ -448,6 +481,10 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
     copy_line_message: async args => ui.messageAction({ ...args, action: 'copy' }),
     translate_line_message: async args => ui.messageAction({ ...args, action: 'translate' }),
     stage_line_forward: async args => ui.messageAction({ ...args, action: 'forward' }),
+    prepare_line_forward: args => forwards().prepare(args),
+    confirm_line_forward: args => forwards().confirm(args),
+    verify_line_forward: args => forwards().verify(args),
+    cancel_line_forward: args => forwards().cancel(args),
     send_message_manual: args => sendText(args, false),
     send_message_auto: args => sendText(args, true),
     send_file_manual: async args => {
@@ -466,7 +503,9 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
     requireChat(args.chatName);
     requireText(args.message, 'message');
     const result = await ui.sendText({ chatName: args.chatName, message: args.message,
-      autoSend, ...(args.chatType === 'group' ? { chatType: 'group' } : {}), ...(args.idempotencyKey ? {idempotencyKey:args.idempotencyKey} : {}) });
+      autoSend, ...(args.chatType === 'group' ? { chatType: 'group' } : {}), ...(args.idempotencyKey ? {idempotencyKey:args.idempotencyKey} : {}),
+      ...(args.expectedChatRef ? { expectedChatRef: args.expectedChatRef } : {}),
+      ...(args.expectedOwnSenderRef ? { expectedOwnSenderRef: args.expectedOwnSenderRef } : {}) });
     if (result?.success !== true) throw new LineToolError('LINE_SEND_OR_STAGE_FAILED', result?.error || 'Text operation failed; inspect LINE before retrying.', { operationMayHaveCompleted: autoSend });
     if(result.status) return {...result, mentionVerified:false, timestamp:now().toISOString(),
       note:autoSend?(result.reused?'Reused the earlier operation; no new message was dispatched by this call. Recipient delivery and read state are not established.':'New own message verified in local DB. Recipient delivery and read state are not established.'):'Draft staged. Nothing sent.'};

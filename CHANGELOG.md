@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.3.0 — 2026-09-24 (Asia/Taipei)
+
+- Add metadata-only recent-chat discovery and identity-only recipient checks.
+  Optional opaque chat/account refs bind reads and sends before UI input.
+- Resolve unopened same-name contacts for a unique existing direct chat only
+  with independent visible recent context. Add read-only preparation; preserve
+  automatic opening for globally unique targets and existing collision checks.
+- Add prepare/confirm/verify/cancel original-message forwarding, bound to one
+  source/account/recipient, with persistent dispatch intent and no automatic
+  resend after uncertainty. Cancellation before dispatch is not recall.
+- Select unique exact names beyond the first search result. Keep receipt
+  scopes bounded across midnight and require overlap on truncated pages.
+- Expose 33 active Windows tools and preserve five hidden legacy aliases.
+
+Validation: 349 Node tests passed; Python 135 run, 127 passed and eight skipped.
+The runtime code matches the live-tested local.4 candidate. Real preparation,
+wrong-ref refusals, one approved plain-text send with a new own exact-text
+local record, and synthetic-attachment forwarding with guided recall were
+verified. Local records are not recipient delivery/read proof. No private
+chat data or runtime evidence is included. See [release notes](docs/releases/README.md)
+and [migration instructions](docs/MIGRATING.md#upgrading-to-v330).
+
 ## 3.2.0 — 2026-09-23 (Asia/Taipei)
 
 **Bounded Windows workflows and local receipt checks.** This release retains

@@ -193,7 +193,7 @@ test('unlabelled Qt menu uses only its unique popup-sized screenshot for OCR', a
   assert.equal(result.opened, true);
   const clicks = calls.filter(call => call.name === 'click');
   assert.equal(clicks.length, 2);
-  assert.deepEqual([clicks[1].args.window_id, clicks[1].args.x, clicks[1].args.y], [100, 55, 168.5]);
+  assert.deepEqual([clicks[1].args.window_id, clicks[1].args.x, clicks[1].args.y], [100, 55, 169]);
   assert.deepEqual(recognized.filter(value => value !== 'synthetic'), ['popup', 'popup']);
 });
 

@@ -8,7 +8,9 @@ Choose a chat and date range. Let your AI assistant organize the conversation to
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[v3.2.0 release notes](releases/v3.2.0.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+[v3.3.0 release notes](releases/v3.3.0.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+
+**v3.3.0 — Bound recipients and original-message forwarding:** Add recent-chat discovery, identity checks and forwarding receipts. A unique existing direct chat can pass an unopened same-name contact collision only with paired chat/account refs and independent visible context. Globally unique targets keep automatic opening; uncertain operations never automatically resend. [Changes and live validation](releases/v3.3.0.en.md)
 
 **v3.2.0 — Plain-text sends and local receipts:** A send binds the exact chat and own sender, then checks for a new local own message within one 30-second deadline. `RECORDED_LOCAL` is not delivery or read proof. Uncertain operations are checked without automatic resending. Dated MCP reads/search/exports/verification share the scoped local reader; undated calls retain loaded UI history. Windows lists 26 active extension tools and keeps five legacy aliases callable but hidden. [Details](releases/v3.2.0.en.md)
 
@@ -19,7 +21,7 @@ Choose a chat and date range. Let your AI assistant organize the conversation to
 
 **LINE Agent MCP**, the Windows community edition maintained by [bensonmaxai](https://github.com/bensonmaxai/line-desktop-mcp), based on [Geoffrey Wang's original project](https://github.com/dtwang/line-desktop-mcp). It connects a local MCP client to a signed-in LINE Desktop. Codex is our everyday client; other local MCP clients can connect too. This project is not affiliated with LINE.
 
-Set `LINE_MCP_EXTENSIONS=1` on Windows for **26 listed active tools**, with **five callable but hidden legacy aliases**. Without the flag, **five tools** are listed. macOS lists the same five names, but reads and sends are unavailable in this release.
+Set `LINE_MCP_EXTENSIONS=1` on Windows for **33 listed active tools**, with **five callable but hidden legacy aliases**. Without the flag, **five tools** are listed. macOS lists the same five names, but reads and sends are unavailable in this release.
 
 **v3.0.0 security update:** Every Windows named-chat GUI operation, including the five defaults, needs CUA and the configured local reader. A private metadata-only check resolves one unique group or existing direct chat without reading messages, then verifies an already-open LINE header. Automatic first-result navigation is disabled. macOS reads/sends refuse before automation. Reply images are cropped to the requested chat; APNG previews contain one frame. GUI history copy restores the prior available clipboard formats when no newer writer intervenes. [Release notes](releases/v3.0.0.en.md) · [Migration](MIGRATING.md#upgrading-to-v300)
 
@@ -43,7 +45,7 @@ Ordinary text drafts are reviewed in Codex. The agent performs visual UI checks;
 ## Install and migrate
 
 ```powershell
-git clone --branch v3.2.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

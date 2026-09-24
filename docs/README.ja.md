@@ -8,7 +8,9 @@
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[v3.2.0 リリースノート](releases/v3.2.0.ja.md) · [インストール](quickstart-windows.md) · [v3.2.0 へのアップグレード](MIGRATING.md#upgrading-to-v320) · [技術仕様](windows-extensions.md)
+[v3.3.0 リリースノート](releases/v3.3.0.ja.md) · [インストール](quickstart-windows.md) · [v3.3.0 へのアップグレード](MIGRATING.md#upgrading-to-v330) · [技術仕様](windows-extensions.md)
+
+**v3.3.0 — 宛先の結び付けと転送の確認：** 最近のチャット一覧は本文を読まずに表示できます。宛先と現在のアカウントを送信前に結び付け、条件を満たす既存の同名個人チャットを安全に準備します。原メッセージの転送では、確認済みの原文・アカウント・単一宛先を固定し、結果が不確かな場合の自動再送を防ぎます。`RECORDED_LOCAL` は配信や既読を証明しません。[詳細](releases/v3.3.0.ja.md)
 
 **v3.2.0 — 送信とローカル記録：** 正確なチャットと自分の送信者 ID を確認し、30 秒以内に新しいローカル記録を照合します。`RECORDED_LOCAL` は配信・既読の証明ではありません。不確かな操作は自動再送せず、同じ `idempotencyKey` で読み取り専用の再確認を行います。日付を指定した MCP 読み取りなどは共通ローカルリーダーを使用し、日付のない従来の操作は UI 履歴を使用します。[詳細](releases/v3.2.0.ja.md)
 
@@ -19,7 +21,7 @@
 
 **LINE Agent MCP** は、[bensonmaxai](https://github.com/bensonmaxai/line-desktop-mcp) が保守する Windows 向けコミュニティ版です。[Geoffrey Wang の原著プロジェクト](https://github.com/dtwang/line-desktop-mcp) を基にしています。ローカル MCP クライアントを、サインイン済みの LINE Desktop に接続します。Codex を日常のクライアントとして使えますが、ほかのローカル MCP クライアントも接続できます。本プロジェクトは LINE とは提携していません。
 
-Windows で `LINE_MCP_EXTENSIONS=1` を設定すると **26 個のアクティブなツール**が表示され、旧エイリアス 5 個は非表示のまま呼び出せます。設定しない場合は **5 個の標準ツール**を表示します。macOS も同じ 5 個を表示しますが、このリリースでは読み取り、送信、ファイル操作を利用できません。
+Windows で `LINE_MCP_EXTENSIONS=1` を設定すると **33 個のアクティブなツール**が表示され、旧エイリアス 5 個は非表示のまま呼び出せます。設定しない場合は **5 個の標準ツール**を表示します。macOS も同じ 5 個を表示しますが、このリリースでは読み取り、送信、ファイル操作を利用できません。
 
 **v3.0.0 セキュリティリリース（2026年9月12日）：** 標準 5 ツールを含む Windows の名前付きチャット向け GUI 経路には、CUA と構成済みローカルリーダーが必要です。非公開のメタデータ確認はメッセージやメディアを読まず、一意の既存グループまたはダイレクトチャットだけを確認し、ユーザーまたはガイド付き UI が先に開いた承認済みチャットの新しい LINE ヘッダーを検証します。`open_line_chat` は検証だけを行い、最初の検索結果を自動で開きません。macOS は 5 個の記述子を残しますが、チャットの読み取り、送信、ファイル操作は `LINE_CHAT_VERIFICATION_UNAVAILABLE` で拒否され、運用サポートはありません。[アップグレード手順](MIGRATING.md#upgrading-to-v300)
 
@@ -40,17 +42,17 @@ Windows で `LINE_MCP_EXTENSIONS=1` を設定すると **26 個のアクティ�
 
 通常のテキスト下書きは Codex で確認します。エージェントは視覚的な UI チェックを実行しますが、実際のメンションや共有コンテンツの変更には、それぞれのワークフローと承認が引き続き必要です。計画があることは、操作が実行済みである証拠にはなりません。
 
-## インストールと v3.2.0 へのアップグレード
+## インストールと v3.3.0 へのアップグレード
 
-既存のリポジトリを v3.2.0 タグで別の作業ディレクトリに取得できます。
+既存のリポジトリを v3.3.0 タグで別の作業ディレクトリに取得できます。
 
 ```powershell
-git clone --branch v3.2.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
 
-既存の `line-desktop-mcp` から移行する場合は、まず現在の MCP クライアント設定をバックアップしてください。上の手順で v3.2.0 を新しい並列のソースディレクトリに取得し、既存の MCP 登録をそのディレクトリへ向け直します。以前のチェックアウト、ランチャー、設定はロールバック用に残してください。LINE アカウントやチャットデータを移行する必要はありません。
+既存の `line-desktop-mcp` から移行する場合は、まず現在の MCP クライアント設定をバックアップしてください。上の手順で v3.3.0 を新しい並列のソースディレクトリに取得し、既存の MCP 登録をそのディレクトリへ向け直します。以前のチェックアウト、ランチャー、設定はロールバック用に残してください。LINE アカウントやチャットデータを移行する必要はありません。
 
 Node.js 24 LTS 以降（検証済み: 24.19.0）と、利用するツールに応じて別途構成したランタイムコンポーネントを使用してください。ローカル読み取りには Windows x64、Python x64、`cryptography` と Pillow、固定された SQLite3MC DLL、明示的な `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` が必要です。両方の Python パッケージは、メタデータのみのモードを含むすべてのローカル読み取りに必要です。v3.1.0 では標準 5 ツールを含む Windows の名前付きチャット GUI 操作にも、これらと `LINE_MCP_CUA_DRIVER` が必須です。最初にユーザーまたはガイド付き UI で承認済みチャットを開いてください。`open_line_chat` は自動検索しません。生の表示名は完全一致が必要で、NFC 同値、空白の圧縮／トリム、メンバー数の衝突パターンは安全側に拒否されます。必要に応じて AutoHotkey v2 とローカル Windows OCR を用います。詳細は[インストールガイド](quickstart-windows.md)を参照してください。
 
@@ -60,7 +62,7 @@ LINE Agent MCP は、この Windows 向けコミュニティ版の表示名で�
 
 本リリースはローカル stdio のみで動作し、HTTP/REST サーバーや有料クラウドサービスを提供しません。カレントディレクトリの `.env` は自動で読み込まず、MCP クライアントが明示的に渡す環境変数で構成します。
 
-GitHub の v3.2.0 リリースにある `line-desktop-mcp-3.2.0.tgz` と `SHA256SUMS.txt` を使用してください。本プロジェクトは npm レジストリには公開されず、MCPB バンドルも提供しません。旧い `line-desktop-mcp@latest` パッケージでは本リリースはインストールされません。
+GitHub の v3.3.0 リリースにある `line-desktop-mcp-3.3.0.tgz` と `SHA256SUMS.txt` を使用してください。本プロジェクトは npm レジストリには公開されず、MCPB バンドルも提供しません。旧い `line-desktop-mcp@latest` パッケージでは本リリースはインストールされません。
 
 ## 根拠と制限
 

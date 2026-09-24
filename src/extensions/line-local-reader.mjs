@@ -23,14 +23,15 @@ const terminationFailure = () => new LineToolError('LOCAL_READER_TERMINATION_FAI
   'The local LINE reader could not be confirmed stopped. Its private scratch directory was retained.', { mayStillBeRunning: true });
 
 export function validateLocalScope(args, { allowIdentityOnly = false, allowGuiIdentityOnly = false,
-  allowGuiCandidateOnly = false, allowGroupCandidateOnly = false } = {}) {
+  allowGuiCandidateOnly = false, allowGroupCandidateOnly = false, allowBoundDirect = false } = {}) {
   const allowGuiMode = allowIdentityOnly && allowGuiIdentityOnly;
   const allowCandidateMode = allowIdentityOnly && allowGuiCandidateOnly;
   const allowGroupCandidateMode = allowIdentityOnly && allowGroupCandidateOnly;
   if (!args || typeof args !== 'object' || Array.isArray(args)
-      || Object.keys(args).some(key => !['chatName', 'chatType', 'dateFrom', 'dateTo', 'messageLimit', 'query', 'cursor', 'mediaMode', 'mediaSourceRefs', 'expectedChatRef', 'requireUniqueName', ...(allowIdentityOnly ? ['identityOnly'] : []), ...(allowGuiMode ? ['guiIdentityOnly'] : []), ...(allowCandidateMode ? ['guiCandidateOnly'] : []), ...(allowGroupCandidateMode ? ['groupCandidateOnly'] : [])].includes(key))) throw fail('LINE_INVALID_ARGUMENT');
+      || Object.keys(args).some(key => !['chatName', 'chatType', 'dateFrom', 'dateTo', 'messageLimit', 'query', 'cursor', 'mediaMode', 'mediaSourceRefs', 'expectedChatRef', 'expectedOwnSenderRef', 'requireUniqueName', ...(allowBoundDirect ? ['boundDirect'] : []), ...(allowIdentityOnly ? ['identityOnly'] : []), ...(allowGuiMode ? ['guiIdentityOnly'] : []), ...(allowCandidateMode ? ['guiCandidateOnly'] : []), ...(allowGroupCandidateMode ? ['groupCandidateOnly'] : [])].includes(key))) throw fail('LINE_INVALID_ARGUMENT');
   if(args.requireUniqueName!==undefined && args.requireUniqueName!==true) throw fail('LINE_INVALID_ARGUMENT');
   if (args.expectedChatRef !== undefined && !/^chat:[0-9a-f]{24}$/u.test(args.expectedChatRef)) throw fail('LINE_INVALID_ARGUMENT');
+  if (args.expectedOwnSenderRef !== undefined && !/^sender:[0-9a-f]{24}$/u.test(args.expectedOwnSenderRef)) throw fail('LINE_INVALID_ARGUMENT');
   requireChat(args.chatName);
   if (args.chatType !== undefined && !['auto', 'group', 'direct'].includes(args.chatType)) throw fail('LINE_INVALID_ARGUMENT');
   if (/[\x00-\x1f]/u.test(args.chatName)) throw fail('LINE_INVALID_ARGUMENT');
@@ -44,6 +45,10 @@ export function validateLocalScope(args, { allowIdentityOnly = false, allowGuiId
   if (days < 0 || days > 30 || !Number.isInteger(messageLimit) || messageLimit < 1 || messageLimit > 1000
       || (args.query !== undefined && (typeof args.query !== 'string' || !args.query.length || args.query.length > 1000 || args.query.includes('\0')))) throw fail('LINE_INVALID_ARGUMENT');
   const mediaMode = args.mediaMode ?? 'metadata';
+  if (args.boundDirect !== undefined && (!allowBoundDirect || args.boundDirect !== true
+    || args.chatType !== 'direct' || args.expectedChatRef === undefined || args.expectedOwnSenderRef === undefined
+    || days > 2 || messageLimit > 30 || mediaMode !== 'metadata'
+    || ['requireUniqueName', 'guiIdentityOnly', 'guiCandidateOnly', 'groupCandidateOnly', 'query', 'cursor', 'mediaSourceRefs'].some(key => key in args))) throw fail('LINE_INVALID_ARGUMENT');
   if (args.identityOnly !== undefined && (args.identityOnly !== true || mediaMode !== 'metadata'
       || ['query', 'cursor', 'mediaSourceRefs'].some(key => key in args))) throw fail('LINE_INVALID_ARGUMENT');
   if (args.guiIdentityOnly !== undefined && (!allowGuiMode || args.guiIdentityOnly !== true
@@ -68,6 +73,19 @@ export function validateLocalScope(args, { allowIdentityOnly = false, allowGuiId
         || new Set(args.mediaSourceRefs).size !== args.mediaSourceRefs.length))) throw fail('LINE_INVALID_ARGUMENT');
   if (args.cursor !== undefined) validateCursor(args.cursor, args);
   return { ...args, messageLimit, mediaMode };
+}
+
+export function validateRecentScope(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)
+      || Object.keys(args).some(key => !['days', 'query', 'limit'].includes(key))
+      || ![14, 30].includes(args.days)
+      || (args.query !== undefined && (typeof args.query !== 'string' || args.query.length < 1
+        || args.query.length > 100 || /\p{Cc}/u.test(args.query)))
+      || (args.limit !== undefined && (!Number.isSafeInteger(args.limit) || args.limit < 1 || args.limit > 50))) {
+    throw fail('LINE_INVALID_ARGUMENT');
+  }
+  return { mode: 'recentChats', days: args.days, limit: args.limit ?? 50,
+    ...(args.query === undefined ? {} : { query: args.query }) };
 }
 
 function validateCursor(value, scope) {
@@ -103,8 +121,10 @@ export function runReaderProcess(payload, options = {}) {
   try {
     // Internal identity flags are accepted here only because callers have
     // already passed through one of the private identity wrappers below.
-    scope = validateLocalScope(payload, { allowIdentityOnly: true, allowGuiIdentityOnly: true,
-      allowGuiCandidateOnly: true, allowGroupCandidateOnly: true });
+    scope = payload?.mode === 'recentChats'
+      ? { mode: 'recentChats', ...validateRecentScope(Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'mode'))) }
+      : validateLocalScope(payload, { allowIdentityOnly: true, allowGuiIdentityOnly: true,
+        allowGuiCandidateOnly: true, allowGroupCandidateOnly: true, allowBoundDirect: true });
   } catch (error) {
     return Promise.reject(error instanceof LineToolError ? error : fail('LINE_INVALID_ARGUMENT'));
   }
@@ -427,6 +447,16 @@ export async function readLocalLineChatIdentity(args, options = {}) {
   return readLocalLineMessages({ ...args, identityOnly: true }, { ...options, allowIdentityOnly: true });
 }
 
+/** Private ref-bound existing-chat lookup. Never exposed as an arbitrary public read flag. */
+export function readLocalLineBoundDirectMessages(args, options = {}) {
+  return readLocalLineMessages({ ...args, boundDirect: true }, { ...options, allowBoundDirect: true });
+}
+
+export function readLocalLineBoundDirectIdentity(args, options = {}) {
+  return readLocalLineMessages({ ...args, boundDirect: true, identityOnly: true },
+    { ...options, allowBoundDirect: true, allowIdentityOnly: true });
+}
+
 export async function readLocalLineGuiChatIdentity(args, options = {}) {
   if (!args || typeof args !== 'object' || Array.isArray(args)
       || Object.keys(args).length !== 1 || !Object.hasOwn(args, 'chatName')) throw fail('LINE_INVALID_ARGUMENT');
@@ -485,16 +515,16 @@ export async function readLocalLineGuiGroupCandidateIdentity(args, options = {})
 }
 
 export async function readLocalLineMessages(args, { runProcess = runReaderProcess, allowIdentityOnly = false,
-  allowGuiIdentityOnly = false, allowGuiCandidateOnly = false, allowGroupCandidateOnly = false } = {}) {
+  allowGuiIdentityOnly = false, allowGuiCandidateOnly = false, allowGroupCandidateOnly = false, allowBoundDirect = false } = {}) {
   const scope = validateLocalScope(args, { allowIdentityOnly, allowGuiIdentityOnly,
-    allowGuiCandidateOnly, allowGroupCandidateOnly });
+    allowGuiCandidateOnly, allowGroupCandidateOnly, allowBoundDirect });
   let output;
   try { output = await runProcess(scope); }
   catch (error) { throw error instanceof LineToolError ? error : fail('LOCAL_READER_UNAVAILABLE'); }
   if (typeof output?.stdout !== 'string' || Buffer.byteLength(output.stdout) > MAX_OUTPUT) throw fail('LOCAL_READER_INVALID_RESULT');
   let result;
   try { result = JSON.parse(output.stdout); } catch { throw fail('LOCAL_READER_INVALID_RESULT'); }
-  const allowedErrors = new Set(['CHAT_NOT_FOUND', 'CHAT_AMBIGUOUS', 'CHAT_IDENTITY_CHANGED', 'CHAT_TYPE_MISMATCH',
+  const allowedErrors = new Set(['CHAT_NOT_FOUND', 'CHAT_AMBIGUOUS', 'CHAT_IDENTITY_CHANGED', 'CHAT_ACCOUNT_CHANGED', 'CHAT_TYPE_MISMATCH',
     'GUI_IDENTITY_UNAVAILABLE', 'GUI_IDENTITY_NAME_TYPE', 'GUI_IDENTITY_NAME_EMPTY', 'GUI_IDENTITY_NAME_TOO_LONG',
     'GUI_IDENTITY_NAME_CONTROL', 'GUI_IDENTITY_NAME_NORMALIZATION', 'GUI_IDENTITY_GROUP_NAME_NULL',
     'GUI_IDENTITY_DIRECT_NAME_NULL', 'GUI_IDENTITY_ID_INVALID',
@@ -545,11 +575,18 @@ export async function readLocalLineMessages(args, { runProcess = runReaderProces
     && Object.keys(result.scope.requested).sort().join(',') === Object.keys(scope).sort().join(','));
   if (result.chatName !== scope.chatName || result.scope?.kind !== expectedKind
       || (scope.expectedChatRef !== undefined && result.chatRef !== scope.expectedChatRef)
+      || (scope.expectedOwnSenderRef !== undefined && result.ownSenderRef !== scope.expectedOwnSenderRef)
       || !guiShapeMatches || !candidateShapeMatches || !groupCandidateShapeMatches
       || result.scope?.requested?.identityOnly !== scope.identityOnly
       || result.scope?.requested?.guiIdentityOnly !== scope.guiIdentityOnly
       || result.scope?.requested?.guiCandidateOnly !== scope.guiCandidateOnly
       || result.scope?.requested?.groupCandidateOnly !== scope.groupCandidateOnly
+      || result.scope?.requested?.expectedChatRef !== scope.expectedChatRef
+      || result.scope?.requested?.expectedOwnSenderRef !== scope.expectedOwnSenderRef
+      || result.scope?.requested?.boundDirect !== scope.boundDirect
+      || (scope.boundDirect && (result.chatIdentity?.kind !== 'direct'
+        || result.chatIdentity.knownNameUnique !== true || result.chatIdentity.guiDisplayNameUnique !== false
+        || typeof result.chatIdentity.globalNameUnique !== 'boolean'))
       || (scope.identityOnly && (result.count !== 0 || result.scope.truncated !== false || !/^chat:[0-9a-f]{24}$/u.test(result.chatRef ?? '')))
       || (result.chatIdentity?.kind === 'group' && !scope.identityOnly
         && result.ownSenderRef !== null && !/^sender:[0-9a-f]{24}$/u.test(result.ownSenderRef ?? ''))
@@ -583,6 +620,76 @@ export async function readLocalLineMessages(args, { runProcess = runReaderProces
     }
   }
   return result;
+}
+
+export async function readLocalLineRecentChats(args, { runProcess = runReaderProcess } = {}) {
+  const scope = validateRecentScope(args);
+  let output;
+  try { output = await runProcess(scope); }
+  catch (error) { throw error instanceof LineToolError ? error : fail('LOCAL_READER_UNAVAILABLE'); }
+  if (typeof output?.stdout !== 'string' || Buffer.byteLength(output.stdout) > MAX_OUTPUT) throw fail('LOCAL_READER_INVALID_RESULT');
+  let result;
+  try { result = JSON.parse(output.stdout); } catch { throw fail('LOCAL_READER_INVALID_RESULT'); }
+  if (output.code !== 0 || result?.ok !== true) {
+    const allowed = new Set(['RECENT_SCOPE_TOO_LARGE', 'RECENT_ROW_INVALID', 'SOURCE_BUSY',
+      'LINE_BUILD_UNVERIFIED', 'SESSION_KEY_UNAVAILABLE', 'SESSION_KEY_CHANGED',
+      'DATABASE_READ_FAILED', 'RESULT_TOO_LARGE', 'MAIN_DATABASE_AMBIGUOUS',
+      'LINE_PROCESS_UNAVAILABLE', 'LINE_PROCESS_AMBIGUOUS', 'ENGINE_INTEGRITY_FAILED',
+      'ENGINE_CIPHER_UNAVAILABLE', 'ENGINE_DLL_UNCONFIGURED', 'ENGINE_DLL_INVALID_PATH',
+      'ENGINE_DLL_UNAVAILABLE', 'RUNTIME_DIRECTORY_UNAVAILABLE', 'SOURCE_IO_ERROR',
+      'SOURCE_NOT_READONLY', 'SOURCE_ACCESS_DENIED', 'SOURCE_NOT_FOUND', 'SOURCE_REPARSE',
+      'SOURCE_NOT_FILE', 'SOURCE_TOO_LARGE', 'INVALID_PATH', 'SOURCE_LIMIT_INVALID',
+      'SNAPSHOT_DESTINATION_EXISTS', 'SNAPSHOT_DISK_FULL', 'SNAPSHOT_IO_ERROR',
+      'SNAPSHOT_CLEANUP_FAILED', 'DATABASE_HEADER_INVALID', 'DATABASE_SIZE_INVALID',
+      'WAL_HEADER_INVALID', 'WAL_PAGE_SIZE_MISMATCH', 'WAL_NO_VALID_COMMIT']);
+    throw fail(allowed.has(result?.code) ? result.code : 'LOCAL_READER_FAILED');
+  }
+  const keys = Object.keys(result).filter(key => !['retrievedAt', 'freshness', 'readerTiming'].includes(key)).sort().join(',');
+  const expectedKeys = 'chats,checkedAt,dateFrom,dateTo,days,hasMore,ok,ownSenderRef,warnings';
+  const checked = Date.parse(result.checkedAt);
+  const taipeiDate = Number.isFinite(checked) ? new Date(checked + 28800000).toISOString().slice(0, 10) : null;
+  const firstDate = taipeiDate ? new Date(Date.parse(taipeiDate) - (scope.days - 1) * 86400000).toISOString().slice(0, 10) : null;
+  const chats = result.chats;
+  const warningPatterns = [
+    /^[1-9][0-9]{0,3} recent chat identities had no valid resolvable name and were excluded\.$/u,
+    /^[1-9][0-9]{0,3} recent chat identities had conflicting records and were excluded\.$/u,
+  ];
+  if (keys !== expectedKeys || result.days !== scope.days || result.dateFrom !== firstDate
+      || result.dateTo !== taipeiDate || !/^\d{4}-\d{2}-\d{2}T.*\+08:00$/u.test(result.checkedAt ?? '')
+      || (result.ownSenderRef !== null && !/^sender:[0-9a-f]{24}$/u.test(result.ownSenderRef ?? ''))
+      || !Array.isArray(chats) || chats.length > scope.limit || !Array.isArray(result.warnings)
+      || result.warnings.length > 2 || result.warnings.some((warning, index) =>
+        typeof warning !== 'string' || !(index === 0
+          ? warningPatterns.some(pattern => pattern.test(warning))
+          : warningPatterns[0].test(result.warnings[0]) && warningPatterns[1].test(warning)))
+      || typeof result.hasMore !== 'boolean' || (result.hasMore && chats.length !== scope.limit)) {
+    throw fail('LOCAL_READER_SCOPE_MISMATCH');
+  }
+  const refs = new Set();
+  for (const [index, chat] of chats.entries()) {
+    const lastAt = typeof chat?.lastMessageAt === 'string' ? Date.parse(chat.lastMessageAt) : NaN;
+    const localMoment = Number.isSafeInteger(chat?.lastMessageTimestamp)
+      ? new Date(chat.lastMessageTimestamp + 28800000) : null;
+    if (!chat || typeof chat !== 'object' || Array.isArray(chat)
+        || Object.keys(chat).sort().join(',') !== 'chatName,chatRef,chatType,lastMessageAt,lastMessageTimestamp'
+        || !/^chat:[0-9a-f]{24}$/u.test(chat.chatRef ?? '') || refs.has(chat.chatRef)
+        || typeof chat.chatName !== 'string' || !chat.chatName || chat.chatName.length > 200
+        || chat.chatName !== chat.chatName.trim() || /\p{Cc}/u.test(chat.chatName)
+        || !['direct', 'group'].includes(chat.chatType)
+        || !Number.isSafeInteger(chat.lastMessageTimestamp)
+        || chat.lastMessageTimestamp > checked
+        || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+08:00$/u.test(chat.lastMessageAt ?? '')
+        || lastAt !== chat.lastMessageTimestamp || !Number.isFinite(localMoment?.valueOf())
+        || (index > 0 && chats[index - 1].lastMessageTimestamp < chat.lastMessageTimestamp)) {
+      throw fail('LOCAL_READER_SCOPE_MISMATCH');
+    }
+    const localDate = localMoment.toISOString().slice(0, 10);
+    if (localDate < result.dateFrom || localDate > result.dateTo) throw fail('LOCAL_READER_SCOPE_MISMATCH');
+    refs.add(chat.chatRef);
+  }
+  return { ok: true, days: result.days, dateFrom: result.dateFrom, dateTo: result.dateTo,
+    checkedAt: result.checkedAt, ownSenderRef: result.ownSenderRef, chats, hasMore: result.hasMore,
+    warnings: result.warnings };
 }
 
 function safeSourceLimitError(result) {
