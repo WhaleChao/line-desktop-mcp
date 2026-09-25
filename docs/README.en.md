@@ -8,7 +8,9 @@ Choose a chat and date range. Let your AI assistant organize the conversation to
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[v3.3.0 release notes](releases/v3.3.0.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+[v3.3.1 release notes](releases/v3.3.1.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+
+**v3.3.1 — Group search fix:** Open a single structural group candidate, then verify the complete detached title and fresh chat/account binding before input. Fix the identity-only account result. [Details](releases/v3.3.1.en.md)
 
 **v3.3.0 — Bound recipients and original-message forwarding:** Add recent-chat discovery, identity checks and forwarding receipts. A unique existing direct chat can pass an unopened same-name contact collision only with paired chat/account refs and independent visible context. Globally unique targets keep automatic opening; uncertain operations never automatically resend. [Changes and live validation](releases/v3.3.0.en.md)
 
@@ -45,7 +47,7 @@ Ordinary text drafts are reviewed in Codex. The agent performs visual UI checks;
 ## Install and migrate
 
 ```powershell
-git clone --branch v3.3.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

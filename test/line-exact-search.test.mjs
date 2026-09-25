@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { exactSearchResult } from '../src/extensions/line-exact-search.mjs';
+import { exactSearchResult, singleGroupSearchCandidate } from '../src/extensions/line-exact-search.mjs';
 
 const window = { bounds: { x: 0, y: 0, width: 740, height: 600 } };
 const dimensions = { width: 738, height: 598 };
@@ -89,4 +89,27 @@ test('partial window geometry can select the second exact row when OCR proves th
   sample.state.elements_complete = false;
   assert.equal(exactSearchResult(sample.state, window, dimensions,
     sample.ocr, 'Example', 'direct').element_index, 5);
+});
+
+test('one clipped group result is a navigation candidate without OCR identity claims', () => {
+  const name = '【合成測試專案】很長的群組名稱';
+  const sample = fixture(['【合成測試專案】很長… (5)']);
+  sample.state.elements.find(item => item.role === 'Edit').value = name;
+  sample.ocr.lines[0].text = '聊天 1';
+  assert.throws(() => exactSearchResult(sample.state, window, dimensions,
+    sample.ocr, name, 'group'), { code: 'LINE_SEARCH_NOT_UNIQUE' });
+  assert.equal(singleGroupSearchCandidate(sample.state, window, dimensions, name).element_index, 4);
+});
+
+test('group navigation refuses changed query, multiple results and incomplete geometry', () => {
+  const changed = fixture(['Example']);
+  changed.state.elements.find(item => item.role === 'Edit').value = 'Different';
+  const incomplete = fixture(['Example']);
+  incomplete.state.total_element_count++;
+  const outside = fixture(['Example']);
+  outside.state.elements.at(-1).frame.y = 500;
+  for (const sample of [changed, fixture(), incomplete, outside, fixture([])]) {
+    assert.throws(() => singleGroupSearchCandidate(sample.state, window, dimensions, 'Example'),
+      { code: 'LINE_SEARCH_NOT_UNIQUE' });
+  }
 });

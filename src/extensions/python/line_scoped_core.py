@@ -595,7 +595,7 @@ def read_scoped(connection, args, snapshot, media_resolver=None, *,
             chat_identity['globalNameUnique'] = False
     if args.get('identityOnly') is True:
         return {'ok': True, 'chatName': args['chatName'], 'chatRef': chat_ref,
-                **({'ownSenderRef': own_sender_ref(connection)} if bound_direct else {}),
+                **({'ownSenderRef': own_sender_ref(connection)} if bound_direct or args.get('expectedOwnSenderRef') is not None else {}),
                 'chatIdentity': chat_identity, 'count': 0, 'messages': [],
                 'pagination': {'hasMore': False, 'nextCursor': None},
                 'retrievedAt': dt.datetime.now(TZ).isoformat(),

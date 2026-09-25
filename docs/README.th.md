@@ -8,7 +8,9 @@
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[บันทึกการอัปเดต v3.3.0](releases/v3.3.0.th.md) · [การติดตั้ง](quickstart-windows.md) · [อัปเกรดเป็น v3.3.0](MIGRATING.md#upgrading-to-v330) · [ข้อกำหนดทางเทคนิค](windows-extensions.md)
+[บันทึกการอัปเดต v3.3.1](releases/v3.3.1.th.md) · [การติดตั้ง](quickstart-windows.md) · [อัปเกรดเป็น v3.3.1](MIGRATING.md#upgrading-to-v331) · [ข้อกำหนดทางเทคนิค](windows-extensions.md)
+
+**v3.3.1 — แก้ค้นหากลุ่ม:** เปิดผลลัพธ์หนึ่งรายการแล้วตรวจชื่อเต็ม แชต และบัญชีก่อนพิมพ์ [รายละเอียด](releases/v3.3.1.th.md)
 
 **v3.3.0 — ผูกผู้รับและตรวจสอบการส่งต่อ:** แสดงแชตล่าสุดได้โดยไม่อ่านข้อความ ผูกผู้รับกับบัญชีปัจจุบันก่อนส่ง และเตรียมแชตส่วนตัวเดิมที่มีชื่อซ้ำได้เมื่อผ่านการตรวจที่กำหนด การส่งต่อข้อความต้นฉบับผูกต้นทาง บัญชี และผู้รับหนึ่งรายไว้ด้วยกัน โดยไม่ส่งซ้ำอัตโนมัติหากผลไม่แน่นอน `RECORDED_LOCAL` ไม่ใช่หลักฐานว่าผู้รับได้รับหรืออ่านข้อความแล้ว [รายละเอียด](releases/v3.3.0.th.md)
 
@@ -42,17 +44,17 @@
 
 ร่างข้อความธรรมดาจะได้รับการตรวจทานใน Codex เอเจนต์ทำการตรวจสอบ UI ด้วยภาพ แต่การ mention จริงและการเปลี่ยนแปลงเนื้อหาที่แชร์ยังต้องใช้เวิร์กโฟลว์และการอนุมัติของแต่ละงาน แผนงานไม่ใช่หลักฐานว่าการกระทำเกิดขึ้นแล้ว
 
-## การติดตั้งและอัปเกรดเป็น v3.3.0
+## การติดตั้งและอัปเกรดเป็น v3.3.1
 
-ให้รับ repository เดิมที่ tag v3.3.0 ลงในไดเรกทอรีแยก:
+ให้รับ repository เดิมที่ tag v3.3.1 ลงในไดเรกทอรีแยก:
 
 ```powershell
-git clone --branch v3.3.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
 
-หากย้ายจาก `line-desktop-mcp` รุ่นก่อน ให้สำรองการตั้งค่า MCP client ปัจจุบันก่อน รับ v3.3.0 ลงในไดเรกทอรี source ใหม่ที่วางคู่กันด้วยคำสั่งข้างต้น แล้วชี้ MCP registration เดิมไปยังไดเรกทอรีใหม่นั้น เก็บ checkout, launcher และการตั้งค่าเดิมไว้สำหรับ rollback บัญชี LINE และข้อมูลแชตไม่ต้องย้าย
+หากย้ายจาก `line-desktop-mcp` รุ่นก่อน ให้สำรองการตั้งค่า MCP client ปัจจุบันก่อน รับ v3.3.1 ลงในไดเรกทอรี source ใหม่ที่วางคู่กันด้วยคำสั่งข้างต้น แล้วชี้ MCP registration เดิมไปยังไดเรกทอรีใหม่นั้น เก็บ checkout, launcher และการตั้งค่าเดิมไว้สำหรับ rollback บัญชี LINE และข้อมูลแชตไม่ต้องย้าย
 
 ใช้ Node.js 24 LTS ขึ้นไป (ทดสอบแล้ว: 24.19.0) และส่วนประกอบ runtime ที่ตั้งค่าแยกต่างหากตาม tools ที่ต้องใช้ การอ่านในเครื่องต้องใช้ Windows x64, Python x64, `cryptography` และ Pillow, SQLite3MC DLL ที่ตรึงไว้ และ `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` ที่ระบุอย่างชัดเจน ต้องมี Python packages ทั้งสองสำหรับ local read ทุกแบบ รวมถึง metadata mode ใน v3.1.0 การทำงาน GUI กับแชตที่ระบุชื่อบน Windows รวมทั้ง 5 tools เดิม ต้องใช้สิ่งเหล่านี้และ `LINE_MCP_CUA_DRIVER` ด้วย ผู้ใช้หรือ UI แบบมีผู้ใช้กำกับต้องเปิดแชตที่ได้รับอนุญาตก่อน `open_line_chat` จะไม่ค้นหาให้อัตโนมัติ ชื่อที่แสดงแบบดิบต้องตรงทุกตัวอักษร และกรณี NFC เทียบเท่า การยุบ/ตัดช่องว่าง หรือรูปแบบชนกันจากจำนวนสมาชิกจะ fail closed เครื่องมือ UI ใช้ AutoHotkey v2 และ Windows OCR ภายในเครื่องเมื่อจำเป็น ดูรายละเอียดใน[คู่มือการติดตั้ง](quickstart-windows.md)
 
@@ -62,7 +64,7 @@ LINE Agent MCP เป็นชื่อที่ใช้แสดงของ�
 
 รุ่นนี้ทำงานผ่าน local stdio เท่านั้น ไม่มี HTTP/REST server หรือบริการ cloud แบบมีค่าใช้จ่าย และจะไม่โหลด `.env` ใน current working directory โดยอัตโนมัติ การตั้งค่ามาจาก environment variables ที่ MCP client ส่งมาอย่างชัดเจน
 
-ใช้ `line-desktop-mcp-3.3.0.tgz` และ `SHA256SUMS.txt` จาก GitHub release v3.3.0 โครงการนี้ไม่ได้เผยแพร่บน npm registry และไม่มี MCPB bundle แพ็กเกจเก่า `line-desktop-mcp@latest` จะไม่ติดตั้งรุ่นนี้
+ใช้ `line-desktop-mcp-3.3.1.tgz` และ `SHA256SUMS.txt` จาก GitHub release v3.3.1 โครงการนี้ไม่ได้เผยแพร่บน npm registry และไม่มี MCPB bundle แพ็กเกจเก่า `line-desktop-mcp@latest` จะไม่ติดตั้งรุ่นนี้
 
 ## หลักฐานและขอบเขต
 

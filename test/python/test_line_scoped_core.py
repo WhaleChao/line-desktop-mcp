@@ -75,6 +75,27 @@ class ScopeTests(unittest.TestCase):
             with self.assertRaises(core.ReaderError):
                 core.validate_scope({**self.args, **changed})
 
+    def test_identity_only_returns_checked_account_for_group_and_direct(self):
+        self.db.execute('INSERT INTO _profile VALUES (?,?)', ('own-mid', 'Own'))
+        self.db.execute('INSERT INTO _chat VALUES (?,?)', ('u1', 0))
+        expected_sender = core.reference('sender', 'own-mid')
+        for name, kind, chat_id in [('Synthetic Group', 'group', 'c1'),
+                                    ('Synthetic Direct 😀', 'direct', 'u1')]:
+            with self.subTest(chatType=kind):
+                args = {**self.args, 'chatName': name, 'chatType': kind,
+                        'messageLimit': 30, 'identityOnly': True,
+                        'requireUniqueName': True,
+                        'expectedChatRef': core.reference('chat', chat_id)}
+                legacy = core.read_scoped(self.db, args, {})
+                self.assertNotIn('ownSenderRef', legacy)
+                result = core.read_scoped(self.db, {**args, 'expectedOwnSenderRef': expected_sender}, {})
+                self.assertEqual(result['ownSenderRef'], expected_sender)
+                self.assertEqual(result['messages'], [])
+                with self.assertRaises(core.ReaderError) as caught:
+                    core.read_scoped(self.db, {**args,
+                        'expectedOwnSenderRef': core.reference('sender', 'other')}, {})
+                self.assertEqual(caught.exception.code, 'CHAT_ACCOUNT_CHANGED')
+
     def test_selected_chat_and_account_refuse_before_message_rows(self):
         self.db.execute('INSERT INTO _profile VALUES (?,?)', ('own-mid', 'Own'))
         self.add('private-message', self.start)

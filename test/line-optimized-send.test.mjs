@@ -68,7 +68,7 @@ test('Return transport failure still verifies the local record; one input dispat
   assert.equal(result.deliveryVerified,false);
   assert.equal(env.stats().presses,1);
   assert.equal(env.stats().writes,1);
-  assert.equal(env.stats().reads,3);
+  assert.equal(env.stats().reads,4);
 });
 
 test('paired globally unique direct sends retain automatic opening and bounded receipts across midnight',async t=>{
@@ -135,13 +135,32 @@ test('a pre-Return input refusal preserves staged-draft uncertainty without disp
   assert.equal(env.stats().writes,1);
 });
 
-test('changed local chat or signed-in sender after drafting refuses Return',async()=>{
+test('changed group identity after navigation refuses all composer input',async()=>{
   for(const change of [{identityChangeAtRead:2},{senderChangeAtRead:2}]){
+    const env=environment(change);
+    await assert.rejects(sendPlainText(env.ui,args,env.dependencies),error=>
+      error.code==='LINE_CHAT_IDENTITY_CHANGED' && error.details.status==='NOT_SENT'
+        && error.details.sendDispatched===false && error.details.draftMayBeStaged===false);
+    assert.equal(env.stats().writes,0);
+    assert.equal(env.stats().presses,0);
+  }
+});
+
+test('wrong detached title refuses group composer input',async()=>{
+  const env=environment({switchAtSnapshot:1});
+  await assert.rejects(sendPlainText(env.ui,args,env.dependencies),error=>
+    error.code==='LINE_CHAT_UNVERIFIED' && error.details.status==='NOT_SENT');
+  assert.equal(env.stats().writes,0);
+  assert.equal(env.stats().presses,0);
+});
+
+test('changed local chat or signed-in sender after drafting refuses Return',async()=>{
+  for(const change of [{identityChangeAtRead:3},{senderChangeAtRead:3}]){
     const env=environment(change);
     await assert.rejects(sendPlainText(env.ui,args,env.dependencies),error=>
       error.code==='LINE_CHAT_IDENTITY_CHANGED' && error.details.status==='DRAFTED'
       && error.details.sendDispatched===false);
-    assert.equal(env.stats().reads,2);
+    assert.equal(env.stats().reads,3);
     assert.equal(env.stats().presses,0);
     assert.equal(env.stats().draft,message);
   }
@@ -192,7 +211,7 @@ test('selected refs remain bound through pre-Return and receipt reads',async()=>
   const selected={expectedChatRef:chatRef,expectedOwnSenderRef:ownSenderRef};
   const sent=await sendPlainText(env.ui,{...args,...selected},env.dependencies);
   assert.equal(sent.status,'RECORDED_LOCAL');
-  assert.equal(env.stats().readScopes.length,3);
+  assert.equal(env.stats().readScopes.length,4);
   assert.equal(env.stats().readScopes[0].requireUniqueName,true);
   assert.equal(env.stats().readScopes[1].requireUniqueName,true);
   for(const scope of env.stats().readScopes){
@@ -206,7 +225,7 @@ test('a post-Return chat switch still verifies an exact local receipt without re
   const result=await sendPlainText(env.ui,args,env.dependencies);
   assert.equal(result.status,'RECORDED_LOCAL');
   assert.equal(env.stats().presses,1);
-  assert.equal(env.stats().reads,3);
+  assert.equal(env.stats().reads,4);
 });
 
 test('identical preexisting user draft is preserved and reported NOT_SENT',async()=>{

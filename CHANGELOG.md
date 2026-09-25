@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.3.1 — 2026-09-25 (Asia/Taipei)
+
+- Fix group search refusals caused by the chat-category label and clipped long names. A single structural result is navigation only; require the exact detached title and fresh bound local identity before input.
+- Preserve the strict multi-result/direct paths, wrong-account refusal and pre-send checks.
+- Return the checked own account reference from identity-only reads when requested.
+- Keep dependencies, tool schemas and send journals unchanged.
+
+Validation: Node 353 passed; Python 136 run, 128 passed, eight environment skips. Live group preparation completed in 10.266 seconds with an empty composer and no message typed or sent. Focused patch security review found no confirmed vulnerabilities. See [release notes](docs/releases/v3.3.1.en.md).
+
 ## 3.3.0 — 2026-09-24 (Asia/Taipei)
 
 - Add metadata-only recent-chat discovery and identity-only recipient checks.

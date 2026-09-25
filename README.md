@@ -8,7 +8,9 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[v3.3.0 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[v3.3.1 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+
+**v3.3.1 — 群組搜尋修復：** 支援被截斷的群組搜尋名稱；先開啟候選，再核對完整視窗標題與聊天室／帳號。另修正身分查詢漏回傳已核對帳號的問題。[更新說明](docs/releases/v3.3.1.zh-TW.md)
 
 **v3.3.0 — 收件人綁定與原訊息轉發：** 新增最近聊天室清單、收件人預檢及轉發核對。既有直聊不再單純被未聊天的同名好友擋住，而是綁定聊天室／帳號，再以實際畫面核對；名稱唯一的對象保留原本快速流程。結果不確定仍不自動重送。[更新與實測界線](docs/releases/v3.3.0.zh-TW.md)
 
@@ -48,7 +50,7 @@ Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後列出 **33 個目前使用的工具**
 ## 安裝與升級
 
 ```powershell
-git clone --branch v3.3.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

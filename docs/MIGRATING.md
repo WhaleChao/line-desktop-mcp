@@ -1,14 +1,20 @@
-# Upgrade to v3.3.0
+# Upgrade to v3.3.1
 
 [Project home](../README.md) · [Windows installation](quickstart-windows.md) · [Features](features.md)
 
-LINE Agent MCP v3.3.0 continues the same
+LINE Agent MCP v3.3.1 continues the same
 [bensonmaxai/line-desktop-mcp](https://github.com/bensonmaxai/line-desktop-mcp)
 repository, package name, and MCP server name: **line-desktop-mcp**. The
 release uses the existing GitHub repository; it is not published to
 the npm registry or as an MCPB bundle. LINE account and chat data do not migrate.
 The reader still uses bounded, read-only local copies; it is not an account
 backup or a migration tool.
+
+## Upgrading to v3.3.1
+
+Install tag `v3.3.1` or its release archive in a new directory and use `npm ci --ignore-scripts`. Dependencies and tool schemas are unchanged from v3.3.0. Preserve Python, SQLite3MC, CUA and AutoHotkey settings, switch the server path, then reconnect; existing server processes do not change version automatically. Expect version `3.3.1` and 33 active Windows tools.
+
+Keep the old directory and send journals for rollback. The group-search fix requires the complete detached title and fresh recipient/account check before input. `prepare_line_send_target` remains direct-chat only; this patch adds no group preparation tool. Runtime code matches `3.3.1-local.1`. [Validation and limits](releases/v3.3.1.en.md).
 
 ## Upgrading to v3.3.0
 

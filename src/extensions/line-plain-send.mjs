@@ -7,7 +7,7 @@ import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDir
 import { hasBoundDirectRefs, boundDirectScope, inspectBoundDirect } from './line-bound-direct.mjs';
 import { mainLineWindow, snapshot, elementTarget } from './cua-line-client.mjs';
 import { recognizeLineImage, purepngDimensions } from './line-ocr.mjs';
-import { exactSearchResult } from './line-exact-search.mjs';
+import { exactSearchResult, singleGroupSearchCandidate } from './line-exact-search.mjs';
 import { inspectDetachedChat, createChatGuard, composerOptions,
   writeDraft, runUiInput, findComposer, findMainChatBands, findContentHeaderContainer } from './line-ui.mjs';
 
@@ -92,8 +92,11 @@ export async function openExactChat(ui, api, chatName, chatType, check) {
     try {
       const image=state.images?.[0];
       const dimensions=purepngDimensions(image);
-      const recognized=await recognizeLineImage(image);
-      result=exactSearchResult(state,window,dimensions,recognized,chatName,chatType);
+      if(chatType==='group') {
+        try { result=singleGroupSearchCandidate(state,window,dimensions,chatName); }
+        catch { result=null; }
+      }
+      result ??= exactSearchResult(state,window,dimensions,await recognizeLineImage(image),chatName,chatType);
       break;
     }catch{result=null;}
     if(attempt<3){await pause(200);state=await snapshot(api,target,{screenshot:true});}
@@ -201,10 +204,12 @@ export async function sendPlainText(ui,{chatName,message,chatType,autoSend,idemp
       const inspected=context?.inspected ?? await openExactChat(ui,api,chatName,chatType,check);
       const guard=context?.guard ?? createChatGuard(chatName,inspected,ui.ocr,ui.visual);
       const options=context?.options ?? composerOptions(inspected,guard);
-      if(pairedDirect && !needsContext){
-        const current=await read(boundScope);
+      if(chatType==='group' || (pairedDirect && !needsContext)){
+        const current=await read({...boundScope,...(chatType==='group'?{requireUniqueName:true}:{})});
         if(current.chatRef!==before.chatRef || current.ownSenderRef!==before.ownSenderRef
-          || current.chatIdentity?.globalNameUnique!==true)fail('LINE_CHAT_IDENTITY_CHANGED','Identity changed before draft input.');
+          || current.chatIdentity?.kind!==chatType
+          || (pairedDirect && current.chatIdentity?.globalNameUnique!==true))
+          fail('LINE_CHAT_IDENTITY_CHANGED','Identity changed before draft input.');
       }
       if(autoSend){record.status='DRAFTING';await writeRecord(file,record);}
       writingDraft=true;

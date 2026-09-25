@@ -26,6 +26,26 @@ function imageRect(frame, geometry, dimensions) {
   return mapped;
 }
 
+/** Navigation only: LINE labels group search results as "聊天" and clips
+ * long titles. One structural result may be opened, but this is NOT identity
+ * proof. The caller must verify the detached full title and refresh the bound
+ * local recipient before any composer input. */
+export function singleGroupSearchCandidate(state, window, dimensions, chatName) {
+  if (typeof chatName !== 'string' || !chatName) fail();
+  let layout;
+  try { layout = directSearchLayout(state, window, dimensions); } catch { fail(); }
+  if (layout.edit.value !== chatName) fail();
+  const lists = state.elements.filter(item => item.role === 'List'
+    && same(rect(item), layout.geometry.list));
+  if (lists.length !== 1) fail();
+  const rows = state.elements.filter(item => item.role === 'ListItem'
+    && item.parent_index === lists[0].element_index).sort((a, b) => rect(a)?.y - rect(b)?.y);
+  if (rows.length !== 2 || !same(rect(rows[0]), layout.geometry.category)
+    || !same(rect(rows[1]), layout.geometry.result)
+    || !inside(rect(rows[1]), layout.geometry.list)) fail();
+  return rows[1];
+}
+
 /** Select a search row only when every visible result title and the category
  * count are readable in one complete, screenshot-grounded UIA list. */
 export function exactSearchResult(state, window, dimensions, ocr, chatName, chatType) {
