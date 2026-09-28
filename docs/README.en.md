@@ -8,7 +8,9 @@ Choose a chat and date range. Let your AI assistant organize the conversation to
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[v3.3.2 release notes](releases/v3.3.2.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+[v3.3.3 release notes](releases/v3.3.3.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+
+**v3.3.3 — Recent group picker:** Treat only `_midType=0` index rows as direct chats, so valid groups with generic `_chat` rows remain in the recent list. Real conflicts still refuse. [Details](releases/v3.3.3.en.md)
 
 **v3.3.2 — Search and window binding:** Exact category-tab OCR, guarded one-chat-row direct navigation separated from message-history hits, complete main-window structure and fresh proof after minimized restore. Ambiguous cases refuse. [Details](releases/v3.3.2.en.md)
 
@@ -49,7 +51,7 @@ Ordinary text drafts are reviewed in Codex. The agent performs visual UI checks;
 ## Install and migrate
 
 ```powershell
-git clone --branch v3.3.2 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.3 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

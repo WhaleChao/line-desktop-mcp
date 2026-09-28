@@ -8,7 +8,9 @@ Pilih chat dan rentang tanggal. Biarkan asisten AI menata percakapan bersama gam
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[Catatan rilis v3.3.2](releases/v3.3.2.id.md) · [Instalasi](quickstart-windows.md) · [Tingkatkan ke v3.3.2](MIGRATING.md#upgrading-to-v332) · [Kontrak teknis](windows-extensions.md)
+[Catatan rilis v3.3.3](releases/v3.3.3.id.md) · [Instalasi](quickstart-windows.md) · [Tingkatkan ke v3.3.3](MIGRATING.md#upgrading-to-v333) · [Kontrak teknis](windows-extensions.md)
+
+**v3.3.3 — Daftar grup terbaru:** Hanya baris `_midType=0` dianggap chat langsung, sehingga grup valid dalam indeks `_chat` tidak keliru dikeluarkan. Konflik nyata tetap ditolak. [Rincian](releases/v3.3.3.id.md)
 
 **v3.3.2 — Pemeriksaan pencarian dan jendela:** OCR tab yang persis, navigasi satu baris chat langsung yang dibatasi dan dipisahkan dari hasil riwayat pesan, struktur jendela utama lengkap, dan pemeriksaan ulang setelah pemulihan minimized. Kondisi ambigu ditolak. [Rincian](releases/v3.3.2.id.md)
 
@@ -46,17 +48,17 @@ Minta asisten meninjau chat yang disebutkan dan melaporkan progres saat ini. Asi
 
 Draf teks biasa ditinjau di Codex. Agen melakukan pemeriksaan UI secara visual, tetapi mention nyata dan perubahan konten bersama tetap memerlukan alur kerja serta persetujuan khususnya. Rencana bukan bukti bahwa suatu tindakan telah terjadi.
 
-## Instalasi dan peningkatan ke v3.3.2
+## Instalasi dan peningkatan ke v3.3.3
 
-Ambil repository yang sama pada tag v3.3.2 ke direktori terpisah:
+Ambil repository yang sama pada tag v3.3.3 ke direktori terpisah:
 
 ```powershell
-git clone --branch v3.3.2 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.3 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
 
-Untuk berpindah dari `line-desktop-mcp` versi sebelumnya, cadangkan dahulu konfigurasi klien MCP saat ini. Ambil v3.3.2 ke direktori source baru yang berdampingan dengan perintah di atas, lalu arahkan registration MCP yang ada ke direktori baru itu. Simpan checkout, launcher, dan konfigurasi sebelumnya untuk rollback. Akun LINE dan data chat tidak perlu dimigrasikan.
+Untuk berpindah dari `line-desktop-mcp` versi sebelumnya, cadangkan dahulu konfigurasi klien MCP saat ini. Ambil v3.3.3 ke direktori source baru yang berdampingan dengan perintah di atas, lalu arahkan registration MCP yang ada ke direktori baru itu. Simpan checkout, launcher, dan konfigurasi sebelumnya untuk rollback. Akun LINE dan data chat tidak perlu dimigrasikan.
 
 Gunakan Node.js 24 LTS atau lebih baru (teruji: 24.19.0) serta komponen runtime yang dikonfigurasi terpisah untuk tools yang dipakai. Pembacaan lokal memerlukan Windows x64, Python x64, `cryptography` dan Pillow, SQLite3MC DLL yang dipasangi pin, serta `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` yang eksplisit. Kedua paket Python wajib untuk semua pembacaan lokal, termasuk mode metadata. Pada v3.1.0, jalur GUI Windows untuk chat bernama, termasuk lima tools bawaan, juga memerlukan lingkungan local reader ini dan `LINE_MCP_CUA_DRIVER`. Pengguna atau UI terpandu harus membuka chat yang diizinkan terlebih dahulu; `open_line_chat` tidak mencari secara otomatis. Nama tampilan mentah harus cocok tepat; bentuk NFC yang setara, spasi yang diringkas/dipotong, dan keluarga benturan jumlah anggota gagal secara tertutup. Tools UI memakai AutoHotkey v2 dan Windows OCR lokal bila diperlukan. Lihat [panduan instalasi](quickstart-windows.md).
 
@@ -66,7 +68,7 @@ LINE Agent MCP adalah nama tampilan untuk edisi komunitas Windows ini. v3.0.0 me
 
 Rilis ini hanya berjalan melalui stdio lokal. Tidak ada server HTTP/REST atau layanan cloud berbayar, dan `.env` pada current working directory tidak dimuat otomatis; konfigurasi datang dari variabel lingkungan yang diberikan secara eksplisit oleh klien MCP.
 
-Gunakan `line-desktop-mcp-3.3.2.tgz` dan `SHA256SUMS.txt` dari GitHub release v3.3.2. Proyek ini tidak dipublikasikan ke npm registry dan tidak menyediakan bundel MCPB. Paket lama `line-desktop-mcp@latest` tidak memasang rilis ini.
+Gunakan `line-desktop-mcp-3.3.3.tgz` dan `SHA256SUMS.txt` dari GitHub release v3.3.3. Proyek ini tidak dipublikasikan ke npm registry dan tidak menyediakan bundel MCPB. Paket lama `line-desktop-mcp@latest` tidak memasang rilis ini.
 
 ## Bukti dan batasan
 

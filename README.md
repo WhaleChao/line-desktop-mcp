@@ -8,7 +8,9 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[v3.3.2 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[v3.3.3 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+
+**v3.3.3 — 最近群組清單修正：** 最近聊天室不再把群組在通用 `_chat` 索引的資料列誤當成個人聊天室衝突；真正的身分衝突仍會排除。[更新說明](docs/releases/v3.3.3.zh-TW.md)
 
 **v3.3.2 — 搜尋與主視窗核對：** 逐字辨識分類頁籤、將聊天室列與訊息歷史分開，嚴格限制個人聊天室單筆導覽備援；主視窗及最小化恢復都依完整結構重新核對。曖昧時拒絕。[更新說明](docs/releases/v3.3.2.zh-TW.md)
 
@@ -52,7 +54,7 @@ Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後列出 **33 個目前使用的工具**
 ## 安裝與升級
 
 ```powershell
-git clone --branch v3.3.2 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.3 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

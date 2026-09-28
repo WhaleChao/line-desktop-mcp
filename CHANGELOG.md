@@ -1,11 +1,11 @@
 # Changelog
 
-## 3.3.3 — Unreleased
+## 3.3.3 — 2026-09-29 (Asia/Taipei)
 
 - Fix groups missing from recent-chat results when LINE also records their generic `_chat` index row. Only `_midType=0` rows are direct identities; a normal group index no longer creates a false direct/group conflict.
 - Preserve actual cross-kind and conflicting-name exclusions, result limits, metadata-only reads, and the separate send-target checks.
 
-Validation: five focused Python recent-chat tests and three Node recent-chat contract tests passed. A target-only read of one authorized live group reproduced the old exclusion and confirmed the candidate returns the same group reference. No message text, GUI operation, send, or installed-runtime change was needed.
+Validation: five focused Python recent-chat tests and three Node recent-chat contract tests passed; two regression cases failed before the fix. A target-only read of one authorized live group reproduced the old exclusion and confirmed the corrected path returns the same group reference. No message text, GUI operation or send was involved. A narrow independent review found no blocking security issue. Full Node/Python suites were not rerun for this patch. [Release notes](docs/releases/v3.3.3.en.md).
 
 ## 3.3.2 — 2026-09-28 (Asia/Taipei)
 

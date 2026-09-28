@@ -1,8 +1,14 @@
-# Upgrade to v3.3.2
+# Upgrade to v3.3.3
 
 [Project home](../README.md) · [Windows installation](quickstart-windows.md) · [Features](features.md)
 
-LINE Agent MCP v3.3.2 continues the same repository, package and MCP server name: **line-desktop-mcp**. It is distributed through a GitHub source tag, release `.tgz` and `SHA256SUMS.txt`, without npm-registry or MCPB publication. LINE account and chat data do not migrate.
+LINE Agent MCP v3.3.3 retains the `line-desktop-mcp` package and MCP server identity. Distribution is through a GitHub source tag, release `.tgz` and `SHA256SUMS.txt`, without npm-registry or MCPB publication. LINE account and chat data do not migrate.
+
+## Upgrading to v3.3.3
+
+Install tag `v3.3.3` or its archive in a new directory with `npm ci --ignore-scripts`. Keep the previous installation and send journals for rollback, preserve the Python, SQLite3MC, CUA and AutoHotkey settings, switch the server path, then reconnect. Expect package version `3.3.3` and 33 active Windows tools with extensions enabled.
+
+The recent-chat picker now treats only `_chat._midType=0` as a direct identity, allowing a group to appear even when it also has a generic `_chat` index row. True conflicting names or chat types still refuse. Send, window and search guards, tool schemas, dependencies, CLI behavior and journals are unchanged. This patch was checked with focused tests and a target-only metadata read; no full Node or Python suite is claimed. [Validation and limits](releases/v3.3.3.en.md).
 
 ## Upgrading to v3.3.2
 
