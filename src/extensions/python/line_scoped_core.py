@@ -518,11 +518,13 @@ def read_recent_chats(connection, args, *, now=None):
             continue
         group = connection.execute(
             'SELECT _chatName FROM _groupChat WHERE _chatMid = ? LIMIT 3', (chat_id,)).fetchall()
+        # _chat also indexes groups (observed _midType=2). Only type 0 is a
+        # direct identity, as in the named-chat resolvers above.
         direct = connection.execute(
             'SELECT h._midType, CASE WHEN c._displayNameOverridden IS NULL '
             "OR c._displayNameOverridden = '' THEN c._displayName ELSE c._displayNameOverridden END "
             'FROM _chat h LEFT JOIN _contact c ON h._id = c._mid '
-            'WHERE h._id = ? LIMIT 3', (chat_id,)).fetchall()
+            'WHERE h._id = ? AND h._midType = 0 LIMIT 3', (chat_id,)).fetchall()
         if group and direct:
             conflicting += 1
             continue

@@ -99,6 +99,45 @@ class RecentChatsTests(unittest.TestCase):
         with self.assertRaisesRegex(ReaderError, 'RECENT_SCOPE_TOO_LARGE'):
             read_recent_chats(self.connection, {'mode': 'recentChats', 'days': 14}, now=NOW)
 
+    def test_group_chat_index_row_is_not_a_direct_identity(self):
+        self.db.execute('INSERT INTO _groupChat VALUES (?,?)', ('g1', 'Synthetic Group'))
+        self.db.executemany('INSERT INTO _chat VALUES (?,?)', [('g1', 2), ('d1', 0)])
+        self.db.execute('INSERT INTO _contact VALUES (?,?,?)', ('d1', None, 'Synthetic Group'))
+        self.add('g1', self.stamp('2026-09-24', 10))
+        self.add('d1', self.stamp('2026-09-24', 9))
+        result = read_recent_chats(self.connection, {'mode': 'recentChats', 'days': 30,
+                                  'query': 'synthetic group'}, now=NOW)
+        self.assertEqual([(row['chatRef'], row['chatType']) for row in result['chats']],
+                         [(reference('chat', 'g1'), 'group'), (reference('chat', 'd1'), 'direct')])
+        self.assertEqual(result['warnings'], [])
+        capped = read_recent_chats(self.connection, {'mode': 'recentChats', 'days': 30,
+                                  'query': 'synthetic group', 'limit': 1}, now=NOW)
+        self.assertEqual(capped['chats'], result['chats'][:1])
+        self.assertTrue(capped['hasMore'])
+        self.assertTrue(all('_text' not in sql and '_contentMetadata' not in sql
+                            and '_contentInfo' not in sql for sql in self.connection.sql))
+
+    def test_real_direct_group_and_group_name_conflicts_stay_excluded(self):
+        self.db.executemany('INSERT INTO _groupChat VALUES (?,?)',
+                            [('cross-kind', 'Synthetic Group'), ('renamed', 'First'), ('renamed', 'Second')])
+        self.db.executemany('INSERT INTO _chat VALUES (?,?)', [('cross-kind', 0), ('renamed', 2)])
+        self.db.execute('INSERT INTO _contact VALUES (?,?,?)', ('cross-kind', None, 'Synthetic Group'))
+        for chat_id in ('cross-kind', 'renamed'):
+            self.add(chat_id, self.stamp('2026-09-24', 10))
+        result = read_recent_chats(self.connection, {'mode': 'recentChats', 'days': 14}, now=NOW)
+        self.assertEqual(result['chats'], [])
+        self.assertEqual(result['warnings'],
+                         ['2 recent chat identities had conflicting records and were excluded.'])
+
+    def test_non_direct_index_without_group_name_is_never_a_contact(self):
+        self.db.execute('INSERT INTO _chat VALUES (?,?)', ('missing-group', 2))
+        self.db.execute('INSERT INTO _contact VALUES (?,?,?)', ('missing-group', None, 'Synthetic Contact'))
+        self.add('missing-group', self.stamp('2026-09-24', 10))
+        result = read_recent_chats(self.connection, {'mode': 'recentChats', 'days': 14}, now=NOW)
+        self.assertEqual(result['chats'], [])
+        self.assertEqual(result['warnings'],
+                         ['1 recent chat identities had no valid resolvable name and were excluded.'])
+
 
 if __name__ == '__main__':
     unittest.main()
