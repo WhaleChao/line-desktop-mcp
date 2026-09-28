@@ -7,10 +7,13 @@ import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDir
 import { hasBoundDirectRefs, boundDirectScope, inspectBoundDirect } from './line-bound-direct.mjs';
 import { mainLineWindow, snapshot, elementTarget } from './cua-line-client.mjs';
 import { purepngDimensions } from './line-ocr.mjs';
-import { navigationOcrRegion, searchResultsOcrRegion, recognizeScopedLineImage,
+import { navigationOcrRegion, searchResultsOcrRegion, mixedDirectSearchOcrRegions,
+  recognizeScopedLineImage,
   combineNavigationAndResults } from './line-scoped-ocr.mjs';
 import { exactCategoryTab } from './line-category-tab.mjs';
-import { exactSearchResult, singleGroupSearchCandidate, singleDirectSearchCandidate } from './line-exact-search.mjs';
+import { exactSearchResult, singleGroupSearchCandidate, singleDirectSearchCandidate,
+  mixedDirectSearchCandidate } from './line-exact-search.mjs';
+import { directSearchLayout } from './line-group-navigation.mjs';
 import { inspectDetachedChat, createChatGuard, composerOptions,
   writeDraft, runUiInput, findComposer, findMainChatBands, findContentHeaderContainer } from './line-ui.mjs';
 
@@ -101,13 +104,30 @@ export async function openExactChat(ui, api, chatName, chatType, check) {
       }
       if(!result) {
         const nav=await recognizeScopedLineImage(image,navigationOcrRegion(state,window,dimensions),dimensions);
-        const results=await recognizeScopedLineImage(image,
-          searchResultsOcrRegion(state,window,dimensions),dimensions);
-        const ocr=combineNavigationAndResults(nav,results,dimensions);
-        if(chatType==='direct') {
-          try { result=exactSearchResult(state,window,dimensions,ocr,chatName,chatType); }
-          catch { result=singleDirectSearchCandidate(state,window,dimensions,ocr,chatName); }
-        } else result=exactSearchResult(state,window,dimensions,ocr,chatName,chatType);
+        const layout=directSearchLayout(state,window,dimensions);
+        const list=state.elements.find(e=>e.role==='List' && frame(e)?.x===layout.geometry.list.x
+          && frame(e)?.y===layout.geometry.list.y && frame(e)?.height===layout.geometry.list.height);
+        const rows=state.elements.filter(e=>e.role==='ListItem'
+          && e.parent_index===list?.element_index).sort((a,b)=>frame(a).y-frame(b).y);
+        const mixed=chatType==='direct' && rows.slice(2).some(e=>frame(e).height<45);
+        if(mixed) {
+          const regions=mixedDirectSearchOcrRegions(state,window,dimensions,chatName);
+          const headers=await recognizeScopedLineImage(image,regions.headers,dimensions);
+          const title=await recognizeScopedLineImage(image,regions.title,dimensions);
+          const labels={...headers,lines:headers.lines.filter(line=>
+            line.y+line.height<=regions.title.y || line.y>=regions.messageHeaderTop)};
+          const ocr=combineNavigationAndResults(nav,labels,dimensions);
+          ocr.lines.push(...title.lines);
+          result=mixedDirectSearchCandidate(state,window,dimensions,ocr,chatName);
+        } else {
+          const results=await recognizeScopedLineImage(image,
+            searchResultsOcrRegion(state,window,dimensions),dimensions);
+          const ocr=combineNavigationAndResults(nav,results,dimensions);
+          if(chatType==='direct') {
+            try { result=exactSearchResult(state,window,dimensions,ocr,chatName,chatType); }
+            catch { result=singleDirectSearchCandidate(state,window,dimensions,ocr,chatName); }
+          } else result=exactSearchResult(state,window,dimensions,ocr,chatName,chatType);
+        }
       }
       break;
     }catch{result=null;}

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { exactSearchResult, singleGroupSearchCandidate, singleDirectSearchCandidate } from '../src/extensions/line-exact-search.mjs';
+import { exactSearchResult, singleGroupSearchCandidate, singleDirectSearchCandidate,
+  mixedDirectSearchCandidate } from '../src/extensions/line-exact-search.mjs';
 import { inspectDetachedChat } from '../src/extensions/line-ui.mjs';
 
 const window = { bounds: { x: 0, y: 0, width: 740, height: 600 } };
@@ -188,4 +189,63 @@ test('a candidate cannot pass the mandatory detached full-title check with a par
   const wrong=[{app_name:'LINE.exe',is_on_screen:true,minimized:false,
     pid:42,window_id:99,title:'測試對象'}];
   assert.equal(await inspectDetachedChat(api,requested,{lineWindows:wrong}),undefined);
+});
+
+function mixedDirectSearch() {
+  const sample=observedDirectSearch();
+  sample.requested='Synthetic Chat';
+  sample.state.elements.find(item=>item.role==='Edit').value=sample.requested;
+  sample.state.elements.push(element(62,'ListItem',57,1112,221,302,34));
+  for(let index=0;index<4;index++)
+    sample.state.elements.push(element(63+index,'ListItem',57,1112,255+index*71,302,71));
+  sample.state.total_element_count=sample.state.elements.length;
+  sample.state.returned_element_count=sample.state.elements.length;
+  sample.ocr.lines.push(
+    {text:'Synthetic Chat',x:155,y:143,width:119,height:17},
+    {text:'訊 4',x:80,y:207,width:34,height:14});
+  return sample;
+}
+
+test('mixed Friends results select only the one exact complete chat above four message hits',()=>{
+  const sample=mixedDirectSearch();
+  assert.equal(mixedDirectSearchCandidate(sample.state,sample.observedWindow,
+    sample.observedDimensions,sample.ocr,sample.requested).element_index,59);
+});
+
+test('mixed direct search refuses two chat rows, wrong counts, unreadable headers and stale query',()=>{
+  const mutations=[
+    sample=>{sample.state.elements.splice(sample.state.elements.findIndex(e=>e.element_index===62),0,
+      element(70,'ListItem',57,1112,221,302,71));},
+    sample=>{sample.ocr.lines.at(-1).text='訊 3';},
+    sample=>{sample.ocr.lines.pop();},
+    sample=>{sample.ocr.lines.at(-1).text='未知 4';},
+    sample=>{sample.state.elements.find(e=>e.role==='Edit').value='Stale Chat';},
+    sample=>{sample.state.total_element_count++;},
+    sample=>{sample.state.elements.push(element(71,'ListItem',57,1112,539,302,34));},
+  ];
+  for(const mutate of mutations) {
+    const sample=mixedDirectSearch(); mutate(sample);
+    sample.state.total_element_count=sample.state.elements.length
+      + (sample.state.total_element_count>sample.state.elements.length?1:0);
+    sample.state.returned_element_count=sample.state.elements.length;
+    assert.throws(()=>mixedDirectSearchCandidate(sample.state,sample.observedWindow,
+      sample.observedDimensions,sample.ocr,sample.requested),{code:'LINE_SEARCH_NOT_UNIQUE'});
+  }
+});
+
+test('mixed direct search needs the selected tab and exact untruncated full name',()=>{
+  const mutations=[
+    sample=>{sample.state.elements=sample.state.elements.filter(e=>e.element_index!==17);},
+    sample=>{sample.ocr.lines.find(e=>e.text==='Synthetic Chat').text='SyntheticChat';},
+    sample=>{sample.ocr.lines.find(e=>e.text==='Synthetic Chat').text='Synthetic Chat…';},
+    sample=>{sample.ocr.lines.find(e=>e.text==='Synthetic Chat').x=310;},
+    sample=>{sample.ocr.lines.find(e=>e.text==='Synthetic Chat').text='Synthetic  Chat';},
+  ];
+  for(const mutate of mutations) {
+    const sample=mixedDirectSearch(); mutate(sample);
+    sample.state.total_element_count=sample.state.elements.length;
+    sample.state.returned_element_count=sample.state.elements.length;
+    assert.throws(()=>mixedDirectSearchCandidate(sample.state,sample.observedWindow,
+      sample.observedDimensions,sample.ocr,sample.requested),{code:'LINE_SEARCH_NOT_UNIQUE'});
+  }
 });

@@ -1,6 +1,7 @@
 import { LineToolError } from './line-runtime.mjs';
 import { fingerprintLineRegion, recognizeLineImage } from './line-ocr.mjs';
 import { directSearchLayout } from './line-group-navigation.mjs';
+import { mixedDirectSearchStructure } from './line-exact-search.mjs';
 
 const invalid = () => { throw new LineToolError('LINE_OCR_INVALID_REGION',
   'The current LINE screenshot does not prove a bounded navigation or complete result region.'); };
@@ -63,6 +64,24 @@ export function searchResultsOcrRegion(state, window, dimensions) {
     (list.x+list.width-root.x)*scaleX,(bottom-root.y)*scaleY,dimensions);
   if(region.y<50 || !inside(layout.region,region)) invalid();
   return region;
+}
+
+/** In a mixed direct search, OCR the two section labels and the chat title
+ * separately. The message-hit rows never enter either crop. */
+export function mixedDirectSearchOcrRegions(state, window, dimensions, chatName) {
+  let structure;
+  try { structure=mixedDirectSearchStructure(state,window,dimensions,chatName); }
+  catch { invalid(); }
+  const {layout,chatRow,messageHeader}=structure;
+  const {root,scaleX,scaleY,list,category}=layout.geometry;
+  const header=frame(messageHeader), chat=frame(chatRow);
+  const headers=pixels((list.x-root.x)*scaleX,(category.y-root.y)*scaleY,
+    (list.x+list.width-root.x)*scaleX,Math.floor((header.y+header.height-root.y)*scaleY),dimensions);
+  const title=pixels((chat.x+76-root.x)*scaleX,(chat.y-root.y)*scaleY,
+    (chat.x+chat.width-root.x)*scaleX,(chat.y+30-root.y)*scaleY,dimensions);
+  if(Math.abs(header.y-chat.y-chat.height)>4 || !inside(title,headers)
+    || title.width<60 || title.height<18 || !inside(layout.region,headers)) invalid();
+  return {headers,title,messageHeaderTop:Math.floor((header.y-root.y)*scaleY)};
 }
 
 /** OCR geometry is returned to original PNG coordinates before the existing

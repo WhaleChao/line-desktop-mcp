@@ -8,7 +8,9 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[v3.3.1 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[v3.3.2 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+
+**v3.3.2 — 搜尋與主視窗核對：** 逐字辨識分類頁籤、將聊天室列與訊息歷史分開，嚴格限制個人聊天室單筆導覽備援；主視窗及最小化恢復都依完整結構重新核對。曖昧時拒絕。[更新說明](docs/releases/v3.3.2.zh-TW.md)
 
 **v3.3.1 — 群組搜尋修復：** 支援被截斷的群組搜尋名稱；先開啟候選，再核對完整視窗標題與聊天室／帳號。另修正身分查詢漏回傳已核對帳號的問題。[更新說明](docs/releases/v3.3.1.zh-TW.md)
 
@@ -50,7 +52,7 @@ Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後列出 **33 個目前使用的工具**
 ## 安裝與升級
 
 ```powershell
-git clone --branch v3.3.1 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.2 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

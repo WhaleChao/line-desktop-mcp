@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3.2 — 2026-09-28 (Asia/Taipei)
+
+- Match category tabs using exact word-level OCR; merged OCR lines cannot stand in for a tab.
+- Permit a direct-chat one-result navigation candidate only for an exact query, selected Friends tab, one chat count and row separated from message-history hits, and exact detached full title. Chat/account checks remain required before input.
+- Identify the main LINE window only from the complete positive UIA rail/sidebar/split-pane/divider/search/list structure. Refuse unknown or ambiguous auxiliary windows.
+- Restore a minimized window only by structurally proven exact HWND/PID/title, then recheck the fresh state. Search-result OCR crops use the same observed screenshot and remap coordinates into the full image.
+- No dependency, tool-schema, CLI or send-journal changes; 33 active Windows tools and five hidden aliases remain.
+
+Validation: Node 374/374 passed. Python code is unchanged; the prior v3.3.1 run was 136 tests, 128 passed and eight environment skips, not rerun. Prior live preparation covered exact-HWND minimized restoration and exact detached direct/group titles with empty composers amid auxiliary windows. A later mixed direct Friends search with one chat and four separate message-history hits reached the exact requested detached title with its space retained, refreshed local identity and an empty composer; only search, tab, row and detach were clicked, with no message input or sending. An initial category OCR observation refused transiently; retry after a fresh valid navigation observation passed. Green highlighting alone is not identity proof. The sealed security diff review found no reportable findings; the independent later mixed-search diff review found no actionable security defect. [Release notes](docs/releases/v3.3.2.en.md).
+
 ## 3.3.1 — 2026-09-25 (Asia/Taipei)
 
 - Fix group search refusals caused by the chat-category label and clipped long names. A single structural result is navigation only; require the exact detached title and fresh bound local identity before input.

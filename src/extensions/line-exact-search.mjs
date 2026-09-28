@@ -77,6 +77,74 @@ export function singleDirectSearchCandidate(state, window, dimensions, ocr, chat
   return row;
 }
 
+/** The mixed Friends search has one chat row followed by a separate message
+ * section. UIA shape establishes the crop; OCR must still prove both headers
+ * and the complete, exact chat title before this row can be navigated to. */
+export function mixedDirectSearchStructure(state, window, dimensions, chatName) {
+  let layout;
+  try { layout = directSearchLayout(state, window, dimensions); } catch { fail(); }
+  if (typeof chatName !== 'string' || !chatName || layout.edit.value !== chatName) fail();
+  const lists = state.elements.filter(item => item.role === 'List'
+    && same(rect(item), layout.geometry.list));
+  if (lists.length !== 1) fail();
+  const rows = state.elements.filter(item => item.role === 'ListItem'
+    && item.parent_index === lists[0].element_index)
+    .sort((a, b) => rect(a)?.y - rect(b)?.y);
+  if (rows.length < 4 || !same(rect(rows[0]), layout.geometry.category)
+    || !same(rect(rows[1]), layout.geometry.result)) fail();
+  for (let index = 0; index < rows.length; index += 1) {
+    const current = rect(rows[index]);
+    if (!inside(current, layout.geometry.list)
+      || (index > 0 && Math.abs(current.y - (rect(rows[index - 1]).y
+        + rect(rows[index - 1]).height)) > 4)) fail();
+    if (index === 0 || index === 2) {
+      if (current.height < 20 || current.height > 48) fail();
+    } else if (current.height < 45 || current.height > 110) fail();
+  }
+  return { layout, chatRow: rows[1], messageHeader: rows[2], messageCount: rows.length - 3 };
+}
+
+export function mixedDirectSearchCandidate(state, window, dimensions, ocr, chatName) {
+  if (ocr?.coordinateSpace !== 'input-png-pixels' || ocr.scaleFactor !== 1
+    || ocr.width !== dimensions?.width || ocr.height !== dimensions?.height
+    || !Array.isArray(ocr.lines)) fail();
+  const { layout, chatRow, messageHeader, messageCount } =
+    mixedDirectSearchStructure(state, window, dimensions, chatName);
+  const tab = exactCategoryTab(ocr, state.elements, window.bounds, dimensions, 'direct');
+  if (!tab) fail();
+  const tabFrame = rect(tab);
+  const selected = state.elements.filter(item => {
+    const marker = rect(item);
+    return item.role === 'Group' && item.parent_index === tab.element_index
+      && marker && marker.width >= 20 && marker.width <= tabFrame.width
+      && marker.height >= 1 && marker.height <= 3
+      && marker.x >= tabFrame.x && marker.x + marker.width <= tabFrame.x + tabFrame.width
+      && marker.y >= tabFrame.y + tabFrame.height - 4
+      && marker.y + marker.height <= tabFrame.y + tabFrame.height;
+  });
+  if (selected.length !== 1) fail();
+  const labelIn = frame => ocr.lines.filter(line => inside(line,
+    imageRect(frame, layout.geometry, dimensions)));
+  const chatHeader = labelIn(rect(state.elements.find(item => item.role === 'ListItem'
+    && same(rect(item), layout.geometry.category))));
+  const messagesHeader = labelIn(rect(messageHeader));
+  if (chatHeader.length !== 1 || messagesHeader.length !== 1
+    || !/^聊(?:天)?\s*1$/u.test(canonicalOcrText(chatHeader[0].text ?? ''))
+    || !/^訊(?:息)?\s*[1-9]\d*$/u.test(canonicalOcrText(messagesHeader[0].text ?? ''))) fail();
+  const observedCount = Number(/\d+$/u.exec(canonicalOcrText(messagesHeader[0].text))[0]);
+  if (observedCount !== messageCount) fail();
+  const mapped = imageRect(rect(chatRow), layout.geometry, dimensions);
+  const title = { x: mapped.x + Math.ceil(76 * layout.geometry.scaleX), y: mapped.y,
+    width: mapped.width - Math.ceil(76 * layout.geometry.scaleX),
+    height: Math.min(Math.ceil(35 * layout.geometry.scaleY), Math.floor(mapped.height * .55)) };
+  if (title.width < 60 || title.height < 18) fail();
+  const titles = ocr.lines.filter(line => inside(line, title)
+    && line.x <= title.x + Math.ceil(50 * layout.geometry.scaleX));
+  if (titles.length !== 1 || titles[0].x + titles[0].width > title.x + title.width - 10
+    || /(?:\.{3}|…)/u.test(titles[0].text ?? '') || titles[0].text !== chatName) fail();
+  return chatRow;
+}
+
 /** Select a search row only when every visible result title and the category
  * count are readable in one complete, screenshot-grounded UIA list. */
 export function exactSearchResult(state, window, dimensions, ocr, chatName, chatType) {

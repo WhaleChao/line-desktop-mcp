@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 
-import { navigationOcrRegion, searchResultsOcrRegion, rebaseScopedOcr,
+import { navigationOcrRegion, searchResultsOcrRegion, mixedDirectSearchOcrRegions, rebaseScopedOcr,
   recognizeScopedLineImage, combineNavigationAndResults } from '../src/extensions/line-scoped-ocr.mjs';
 import { exactCategoryTab } from '../src/extensions/line-category-tab.mjs';
 import { exactSearchResult } from '../src/extensions/line-exact-search.mjs';
@@ -87,4 +87,29 @@ test('wrong crop, shifted OCR geometry and missing labels fail closed',async()=>
   assert.throws(()=>combineNavigationAndResults(nav,{...nav,lines:[
     {text:'overlap',x:1,y:20,width:30,height:10,words:[]}]},dimensions),
   {code:'LINE_OCR_INVALID_REGION'});
+});
+
+test('mixed direct OCR stops at the message header and isolates the full chat title',()=>{
+  const bounds={x:1050,y:19,width:1100,height:1400};
+  const size={width:1098,height:1398};
+  const item=(element_index,role,parent_index,x,y,w,h,extra={})=>({
+    element_index,role,parent_index,frame:{x,y,w,h},...extra});
+  const elements=[
+    item(0,'Window',undefined,1050,19,1100,1400),
+    item(1,'Edit',0,1124,82,264,38,{value:'Synthetic Chat'}),
+    item(2,'List',0,1112,116,302,1223),
+    item(3,'ListItem',2,1112,116,302,34),
+    item(4,'ListItem',2,1112,150,302,71),
+    item(5,'ListItem',2,1112,221,302,34),
+    ...[0,1,2,3].map(index=>item(6+index,'ListItem',2,1112,255+71*index,302,71)),
+  ];
+  const state={elements,screenshot_width:size.width,screenshot_height:size.height,
+    total_element_count:elements.length,returned_element_count:elements.length};
+  const regions=mixedDirectSearchOcrRegions(state,{bounds},size,'Synthetic Chat');
+  const firstMessageTop=Math.floor((255-bounds.y)*size.height/bounds.height);
+  assert.equal(regions.headers.y+regions.headers.height,firstMessageTop);
+  assert.ok(regions.title.y>=regions.headers.y);
+  assert.ok(regions.title.y+regions.title.height<regions.messageHeaderTop);
+  assert.throws(()=>mixedDirectSearchOcrRegions(state,{bounds},size,'Stale Chat'),
+    {code:'LINE_OCR_INVALID_REGION'});
 });

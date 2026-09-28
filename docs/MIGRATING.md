@@ -1,14 +1,14 @@
-# Upgrade to v3.3.1
+# Upgrade to v3.3.2
 
 [Project home](../README.md) · [Windows installation](quickstart-windows.md) · [Features](features.md)
 
-LINE Agent MCP v3.3.1 continues the same
-[bensonmaxai/line-desktop-mcp](https://github.com/bensonmaxai/line-desktop-mcp)
-repository, package name, and MCP server name: **line-desktop-mcp**. The
-release uses the existing GitHub repository; it is not published to
-the npm registry or as an MCPB bundle. LINE account and chat data do not migrate.
-The reader still uses bounded, read-only local copies; it is not an account
-backup or a migration tool.
+LINE Agent MCP v3.3.2 continues the same repository, package and MCP server name: **line-desktop-mcp**. It is distributed through a GitHub source tag, release `.tgz` and `SHA256SUMS.txt`, without npm-registry or MCPB publication. LINE account and chat data do not migrate.
+
+## Upgrading to v3.3.2
+
+Install tag `v3.3.2` or its release archive in a new directory and run `npm ci --ignore-scripts`. Dependencies, tool schemas, CLI behavior and send journals are unchanged from v3.3.1. Preserve Python, SQLite3MC, CUA and AutoHotkey settings, switch the MCP server path, then reconnect. Existing processes do not change version automatically. Expect version `3.3.2` and 33 active Windows tools when extensions are enabled.
+
+Keep the old installation and send journals for rollback. The patch tightens category-tab OCR, guards direct one-result navigation, requires full main-window UIA structure amid auxiliary windows, and rechecks exact HWND/PID/title after minimized restoration. A navigation candidate is not identity proof; the complete detached title and fresh chat/account checks remain necessary before input and before any send. The later live mixed Friends search with one chat and four separate message-history hits reached the exact requested detached title, refreshed local identity and an empty composer without message input or sending. Chat and message sections are distinguished; green highlighting alone is not identity proof. An initial category OCR observation refused transiently, then passed after a fresh valid navigation observation. Other ambiguous layouts still refuse. [Validation and limits](releases/v3.3.2.en.md).
 
 ## Upgrading to v3.3.1
 
