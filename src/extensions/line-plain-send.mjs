@@ -6,8 +6,11 @@ import { LineToolError } from './line-runtime.mjs';
 import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDirectMessages, runReaderProcess } from './line-local-reader.mjs';
 import { hasBoundDirectRefs, boundDirectScope, inspectBoundDirect } from './line-bound-direct.mjs';
 import { mainLineWindow, snapshot, elementTarget } from './cua-line-client.mjs';
-import { recognizeLineImage, purepngDimensions } from './line-ocr.mjs';
-import { exactSearchResult, singleGroupSearchCandidate } from './line-exact-search.mjs';
+import { purepngDimensions } from './line-ocr.mjs';
+import { navigationOcrRegion, searchResultsOcrRegion, recognizeScopedLineImage,
+  combineNavigationAndResults } from './line-scoped-ocr.mjs';
+import { exactCategoryTab } from './line-category-tab.mjs';
+import { exactSearchResult, singleGroupSearchCandidate, singleDirectSearchCandidate } from './line-exact-search.mjs';
 import { inspectDetachedChat, createChatGuard, composerOptions,
   writeDraft, runUiInput, findComposer, findMainChatBands, findContentHeaderContainer } from './line-ui.mjs';
 
@@ -61,25 +64,25 @@ export async function readPlainIdentity({chatName}, {readIdentity=readLocalLineC
 export async function openExactChat(ui, api, chatName, chatType, check) {
   let inspected = await inspectDetachedChat(api, chatName);
   if(inspected) return inspected;
-  const window = await mainLineWindow(api);
+  let window = await mainLineWindow(api);
   const target = {pid:window.pid, window_id:window.window_id};
-  if((await ui.automation.activateLine())?.success!==true) fail('LINE_FOCUS_UNAVAILABLE','LINE could not be activated.');
+  if((await ui.automation.activateLine({ ...target, title:window.title }))?.success!==true) fail('LINE_FOCUS_UNAVAILABLE','LINE could not be activated.');
+  const activated = await mainLineWindow(api);
+  if(activated.pid!==target.pid || activated.window_id!==target.window_id
+    || activated.minimized || !activated.is_on_screen
+    || (!window.minimized && ['x','y','width','height'].some(key=>activated.bounds?.[key]!==window.bounds?.[key])))
+    fail('LINE_TARGET_CHANGED','The verified LINE main window changed after activation.');
+  window = activated;
   check();
   let state = await snapshot(api,target,{screenshot:true});
   if(!state.images?.[0]) fail('LINE_CHAT_UNVERIFIED','LINE did not provide the screenshot needed to verify the requested chat.');
   const bounds = window.bounds;
-  const recognized=await recognizeLineImage(state.images[0]);
-  const category=chatType==='group'?'群組':'好友';
-  const labels=recognized.lines.filter(l=>l.y<50 && l.text.replace(/\s/g,'')===category);
-  if(labels.length!==1) fail('LINE_CATEGORY_UNAVAILABLE','The requested LINE category is not visible.');
   const size=purepngDimensions(state.images[0]);
-  const px=bounds.x+(labels[0].x+labels[0].width/2)*bounds.width/size.width;
-  const py=bounds.y+(labels[0].y+labels[0].height/2)*bounds.height/size.height;
-  const tabs=state.elements.filter(e=>e.role==='Group' && frame(e)?.x<=px && frame(e)?.y<=py
-    && frame(e).x+frame(e).width>=px && frame(e).y+frame(e).height>=py
-    && frame(e).width<90 && frame(e).height<45).sort((a,b)=>frame(a).width*frame(a).height-frame(b).width*frame(b).height);
-  if(!tabs.length)fail('LINE_CATEGORY_UNAVAILABLE','The category has no current UI element.');
-  await api.call('click',{...elementTarget(target,state,tabs[0]),delivery_mode:'foreground'});
+  const recognized=await recognizeScopedLineImage(state.images[0],
+    navigationOcrRegion(state,window,size),size);
+  const tab=exactCategoryTab(recognized,state.elements,bounds,size,chatType);
+  if(!tab) fail('LINE_CATEGORY_UNAVAILABLE','The requested LINE category has no unique visible UI tab.');
+  await api.call('click',{...elementTarget(target,state,tab),delivery_mode:'foreground'});
   state=await snapshot(api,target,{screenshot:true});
   const search = state.elements.filter(e=>e.role==='Edit' && frame(e)?.x < bounds.x+bounds.width/2
     && frame(e)?.y < bounds.y+160 && frame(e)?.height<70 && frame(e)?.width>100);
@@ -96,12 +99,21 @@ export async function openExactChat(ui, api, chatName, chatType, check) {
         try { result=singleGroupSearchCandidate(state,window,dimensions,chatName); }
         catch { result=null; }
       }
-      result ??= exactSearchResult(state,window,dimensions,await recognizeLineImage(image),chatName,chatType);
+      if(!result) {
+        const nav=await recognizeScopedLineImage(image,navigationOcrRegion(state,window,dimensions),dimensions);
+        const results=await recognizeScopedLineImage(image,
+          searchResultsOcrRegion(state,window,dimensions),dimensions);
+        const ocr=combineNavigationAndResults(nav,results,dimensions);
+        if(chatType==='direct') {
+          try { result=exactSearchResult(state,window,dimensions,ocr,chatName,chatType); }
+          catch { result=singleDirectSearchCandidate(state,window,dimensions,ocr,chatName); }
+        } else result=exactSearchResult(state,window,dimensions,ocr,chatName,chatType);
+      }
       break;
     }catch{result=null;}
     if(attempt<3){await pause(200);state=await snapshot(api,target,{screenshot:true});}
   }
-  if(!result) fail('LINE_SEARCH_NOT_UNIQUE','Search did not prove exactly one full-name result in the current LINE category.');
+  if(!result) fail('LINE_SEARCH_NOT_UNIQUE','Search did not prove one safe result candidate in the current LINE category.');
   check();
   await api.call('click',{...elementTarget(target,state,result),delivery_mode:'foreground'});
   state=await snapshot(api,target,{screenshot:true});

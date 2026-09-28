@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
 
 import { LineUi } from '../src/extensions/line-ui.mjs';
 
 const CHAT = '測試♋️';
 const CHAT_REF = 'chat:0123456789abcdef01234567';
+const LIVE_MAIN_SHELL = JSON.parse(fs.readFileSync(
+  new URL('./fixtures/live-window-structure-v2-20260928.json', import.meta.url), 'utf8'))
+  .find(item => item.window.window_id === 68616);
+const liveMainShellState = () => ({
+  elements: LIVE_MAIN_SHELL.elements,
+  ...LIVE_MAIN_SHELL.stateMeta,
+});
 
 function localGuiIdentity(chatName = CHAT, kind = 'direct', chatRef = CHAT_REF) {
   return {
@@ -442,10 +450,12 @@ test('malformed GUI identity proof cannot be used as a unique chat', async () =>
 
 test('does not treat a sidebar or global-search hit as an active chat header', async () => {
   const { ui, calls, automationCalls, locks } = fakeEnvironment({
-    states: Array.from({ length: 4 }, (_, index) => state([
-      element(1, { label: CHAT, role: 'ListItem', semantic_role: 'search-result' }),
-      element(2, { label: CHAT, role: 'Edit', value: CHAT }),
-    ], `generic-${index}`)),
+    windows: [LIVE_MAIN_SHELL.window],
+    states: [liveMainShellState(), liveMainShellState(),
+      ...Array.from({ length: 4 }, (_, index) => state([
+        element(1, { label: CHAT, role: 'ListItem', semantic_role: 'search-result' }),
+        element(2, { label: CHAT, role: 'Edit', value: CHAT }),
+      ], `generic-${index}`))],
   });
 
   await assert.rejects(ui.openChat({ chatName: CHAT }), { code: 'LINE_CHAT_UNVERIFIED' });
@@ -457,8 +467,10 @@ test('does not treat a sidebar or global-search hit as an active chat header', a
 test('unverified GUI entry points never open the first unverified search result', async () => {
   for (const method of ['openChat', 'getState', 'getDraft', 'readLegacyHistory']) {
     const { ui, calls, automationCalls } = fakeEnvironment({
-      states: Array.from({ length: 6 }, (_, index) =>
-        state([headerFor('Another chat'), composer('')], `unverified-${index}`)),
+      windows: method === 'openChat' ? [LIVE_MAIN_SHELL.window] : [TARGET],
+      states: [...(method === 'openChat' ? [liveMainShellState(), liveMainShellState()] : []),
+        ...Array.from({ length: 6 }, (_, index) =>
+          state([headerFor('Another chat'), composer('')], `unverified-${index}`))],
     });
     await assert.rejects(ui[method]({ chatName: CHAT, message: 'not staged', autoSend: false }),
       error => ['LINE_CHAT_UNVERIFIED', 'LINE_REPLY_SOURCE_CHAT_TYPE_UNVERIFIED'].includes(error?.code));

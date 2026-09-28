@@ -18,6 +18,11 @@ test('Windows activation binds exact HWND, PID and escaped title before focus', 
   assert.ok(scripts[0].includes('if (expectedPid && pid != expectedPid)'));
   assert.ok(scripts[0].indexOf('if (expectedPid && pid != expectedPid)')
     < scripts[0].indexOf('WinActivate "ahk_id " target.hwnd'));
+  assert.ok(scripts[0].includes('if (expectedHwnd && WinGetMinMax("ahk_id " target.hwnd) = -1)'));
+  assert.ok(scripts[0].indexOf('if (expectedPid && pid != expectedPid)')
+    < scripts[0].indexOf('WinRestore "ahk_id " target.hwnd'));
+  assert.ok(scripts[0].indexOf('WinRestore "ahk_id " target.hwnd')
+    < scripts[0].indexOf('WinActivate "ahk_id " target.hwnd'));
 
   assert.deepEqual(await automation.activateLine(), { success: true });
   assert.ok(scripts[1].includes('AcquireExactLineTarget()'));

@@ -108,7 +108,11 @@ export async function searchDirectCandidate(api, automation, chatName, helpers={
   const target={pid:window.pid,window_id:window.window_id};
   // Background row clicks were reproducibly no-ops on this verified Qt build.
   // Use the existing exact-window activation routine, then discard old state.
-  if((await automation.activateLine())?.success!==true) fail('LINE_FOCUS_UNAVAILABLE');
+  if((await automation.activateLine({...target,title:window.title}))?.success!==true) fail('LINE_FOCUS_UNAVAILABLE');
+  const activated=await mainLineWindow(api);
+  if(!same(target,activated) || activated.minimized || !activated.is_on_screen
+    || (!window.minimized && !sameWindow(window,activated))) fail('LINE_DIRECT_WINDOW_CHANGED');
+  window=activated;
   let state=await snapshot(api,target,{screenshot:true});
   let image=imageOf(state),size=dimensions(image);
   const top=await fp(image,{x:0,y:0,width:size.width,height:Math.min(48,size.height)},{includeImage:true});
@@ -147,7 +151,7 @@ export async function searchDirectCandidate(api, automation, chatName, helpers={
 export async function selectDirectCandidate(api, automation, record, helpers={}) {
   let window=await mainLineWindow(api);
   if(!same(record.target,window) || !sameWindow(record.window,window)) fail('LINE_DIRECT_WINDOW_CHANGED');
-  if((await automation.activateLine())?.success!==true) fail('LINE_FOCUS_UNAVAILABLE');
+  if((await automation.activateLine({...record.target,title:window.title}))?.success!==true) fail('LINE_FOCUS_UNAVAILABLE');
   // Fresh state after activation, with complete query/crop/point comparison.
   window=await mainLineWindow(api);
   if(!same(record.target,window) || !sameWindow(record.window,window)) fail('LINE_DIRECT_WINDOW_CHANGED');

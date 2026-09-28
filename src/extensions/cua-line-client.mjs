@@ -209,9 +209,106 @@ export async function lineWindows(api) {
 
 export async function mainLineWindow(api) {
   const windows = await lineWindows(api);
-  const matches = windows.filter(window => window.title === 'LINE' && !window.minimized && window.is_on_screen);
-  if (matches.length !== 1) throw new LineToolError('LINE_TARGET_NOT_UNIQUE', `Expected one visible LINE main window, found ${matches.length}. Open/unminimize LINE and resolve duplicate main windows.`, { candidateCount: matches.length });
-  return matches[0];
+  const matches = windows.filter(window => window.title === 'LINE'
+    && (window.is_on_screen || window.minimized));
+  const proven = [];
+  let inconclusive = 0;
+  for (const window of matches) {
+    // Existing guarded navigation refuses visible windows below 700 x 600.
+    // Size only excludes unsupported UI; it never selects the main window.
+    if (!window.minimized && (window.bounds?.width < 700 || window.bounds?.height < 600)) continue;
+    let state;
+    try { state = await snapshot(api, window); }
+    catch { inconclusive++; continue; }
+    if (hasMainLineShell(window, state)) proven.push(window);
+    else if (state.elements_complete !== true
+      || (state.total_element_count !== undefined
+        && state.total_element_count !== state.elements.length)) inconclusive++;
+  }
+  if (proven.length !== 1 || inconclusive !== 0) throw new LineToolError('LINE_TARGET_NOT_UNIQUE', `Expected one structurally verified LINE main window, found ${proven.length}; ${inconclusive} candidate(s) could not be ruled out.`, { candidateCount: proven.length, inconclusiveCount: inconclusive, titleCandidateCount: matches.length });
+  return proven[0];
+}
+
+/** A title-LINE popup can have a search Edit and List too. Require the full
+ * main shell: navigation rail, split content panes, divider, and sidebar
+ * search/list in one fresh accessibility tree. Size or z-order alone proves
+ * nothing. A positive full-shell proof can survive unrelated UIA gaps. */
+export function hasMainLineShell(window, state) {
+  const elements = state?.elements;
+  const bounds = window?.bounds;
+  if (!Array.isArray(elements) || !bounds) return false;
+  const rect = element => {
+    const frame = element?.frame;
+    const value = { x:Number(frame?.x), y:Number(frame?.y),
+      width:Number(frame?.w ?? frame?.width), height:Number(frame?.h ?? frame?.height) };
+    return Object.values(value).every(Number.isFinite) && value.width > 0 && value.height > 0 ? value : null;
+  };
+  const near = (a, b, tolerance = 3) => Math.abs(a - b) <= tolerance;
+  const right = box => box.x + box.width;
+  const bottom = box => box.y + box.height;
+  const inside = (inner, outer) => inner && outer && inner.x >= outer.x - 2
+    && inner.y >= outer.y - 2 && right(inner) <= right(outer) + 2
+    && bottom(inner) <= bottom(outer) + 2;
+  const byIndex = new Map(elements.map(element => [element.element_index, element]));
+  const descendantOf = (element, ancestor) => {
+    let parent = element.parent_index;
+    for (let depth = 0; depth < 20 && Number.isInteger(parent); depth++) {
+      if (parent === ancestor.element_index) return true;
+      parent = byIndex.get(parent)?.parent_index;
+    }
+    return false;
+  };
+  const children = (parent, role) => elements.filter(element =>
+    element.parent_index === parent.element_index && element.role === role);
+  const roots = elements.filter(element => element.role === 'Window'
+    && !Number.isInteger(element.parent_index));
+  if (roots.length !== 1) return false;
+  const root = roots[0], outer = rect(root);
+  if (!outer || (window.minimized
+      ? outer.width < 700 || outer.height < 600
+      : !near(outer.x, bounds.x) || !near(outer.y, bounds.y)
+        || !near(outer.width, bounds.width) || !near(outer.height, bounds.height))) return false;
+  const shells = children(root, 'Custom').filter(element => {
+    const box = rect(element);
+    return inside(box, outer) && box.width >= outer.width * .65
+      && box.height >= outer.height * .7 && box.x > outer.x + 30
+      && box.x < outer.x + 150 && near(bottom(box), bottom(outer));
+  });
+  if (shells.length !== 1) return false;
+  const shell = shells[0], content = rect(shell);
+  const rails = children(root, 'Group').filter(element => {
+    const box = rect(element);
+    return box && inside(box, outer) && near(box.x, outer.x)
+      && near(right(box), content.x) && box.height >= content.height * .8;
+  });
+  if (rails.length !== 1) return false;
+  const panes = children(shell, 'Group').map(element => ({ element, box:rect(element) }))
+    .filter(item => item.box && inside(item.box, content)
+      && near(item.box.y, content.y) && item.box.height >= content.height * .8);
+  const sidebars = panes.filter(item => near(item.box.x, content.x)
+    && item.box.width >= 150 && item.box.width <= content.width * .45);
+  if (sidebars.length !== 1) return false;
+  const sidebar = sidebars[0];
+  const bodies = panes.filter(item => near(item.box.x, right(sidebar.box), 5)
+    && item.box.width >= content.width * .4 && near(right(item.box), right(content)));
+  if (bodies.length !== 1) return false;
+  const dividers = children(shell, 'Thumb').filter(element => {
+    const box = rect(element);
+    return box && String(element.label || '').startsWith('qt_splithandle_')
+      && box.width <= 10 && box.height >= content.height * .8
+      && near(box.x, right(sidebar.box), 5);
+  });
+  if (dividers.length !== 1) return false;
+  const edits = elements.filter(element => element.role === 'Edit'
+    && descendantOf(element, sidebar.element) && inside(rect(element), sidebar.box)
+    && rect(element).width > 100 && rect(element).height < 70
+    && rect(element).y < sidebar.box.y + 100);
+  const lists = elements.filter(element => element.role === 'List'
+    && descendantOf(element, sidebar.element) && inside(rect(element), sidebar.box)
+    && rect(element).width >= sidebar.box.width * .8
+    && rect(element).height >= sidebar.box.height * .5);
+  return edits.length === 1 && lists.length === 1
+    && rect(lists[0]).y >= bottom(rect(edits[0])) - 8;
 }
 
 export async function snapshot(api, target, { screenshot = false, query, maxElements = 800 } = {}) {

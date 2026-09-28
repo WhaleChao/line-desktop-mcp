@@ -1,6 +1,7 @@
 import { LineToolError } from './line-runtime.mjs';
 import { canonicalOcrText } from './line-ocr.mjs';
 import { directSearchLayout } from './line-group-navigation.mjs';
+import { exactCategoryTab } from './line-category-tab.mjs';
 
 const fail = () => { throw new LineToolError('LINE_SEARCH_NOT_UNIQUE',
   'The current LINE search did not prove one complete exact recipient name.',
@@ -44,6 +45,36 @@ export function singleGroupSearchCandidate(state, window, dimensions, chatName) 
     || !same(rect(rows[1]), layout.geometry.result)
     || !inside(rect(rows[1]), layout.geometry.list)) fail();
   return rows[1];
+}
+
+/** Navigation only for a direct chat whose result title OCR is unreadable.
+ * Require the selected Friends tab, the screenshot-bound count of one, and
+ * exactly one current UIA result row. The detached full title remains the
+ * caller's mandatory identity check before any composer input. */
+export function singleDirectSearchCandidate(state, window, dimensions, ocr, chatName) {
+  if (ocr?.coordinateSpace !== 'input-png-pixels' || ocr.scaleFactor !== 1
+    || ocr.width !== dimensions?.width || ocr.height !== dimensions?.height
+    || !Array.isArray(ocr.lines)) fail();
+  const row = singleGroupSearchCandidate(state, window, dimensions, chatName);
+  const tab = exactCategoryTab(ocr, state.elements, window.bounds, dimensions, 'direct');
+  if (!tab) fail();
+  const tabFrame = rect(tab);
+  const selected = state.elements.filter(item => {
+    const marker = rect(item);
+    return item.role === 'Group' && item.parent_index === tab.element_index
+      && marker && marker.width >= 20 && marker.width <= tabFrame.width
+      && marker.height >= 1 && marker.height <= 3
+      && marker.x >= tabFrame.x && marker.x + marker.width <= tabFrame.x + tabFrame.width
+      && marker.y >= tabFrame.y + tabFrame.height - 4
+      && marker.y + marker.height <= tabFrame.y + tabFrame.height;
+  });
+  if (selected.length !== 1) fail();
+  const layout = directSearchLayout(state, window, dimensions);
+  const categoryRegion = imageRect(layout.geometry.category, layout.geometry, dimensions);
+  const categoryLines = ocr.lines.filter(line => inside(line, categoryRegion));
+  if (categoryLines.length !== 1
+    || !/^聊(?:天)?\s*1$/u.test(canonicalOcrText(categoryLines[0].text ?? ''))) fail();
+  return row;
 }
 
 /** Select a search row only when every visible result title and the category

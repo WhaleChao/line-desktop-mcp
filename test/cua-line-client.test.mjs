@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { callCuaTool, createCuaInputValidator, closeCuaSession, requireConfiguredCuaDriver, withCuaClient } from '../src/extensions/cua-line-client.mjs';
+import { callCuaTool, createCuaInputValidator, closeCuaSession, hasMainLineShell, mainLineWindow, requireConfiguredCuaDriver, withCuaClient } from '../src/extensions/cua-line-client.mjs';
 import { configuredCuaDriverPath, runtimeRequire } from '../src/extensions/line-runtime.mjs';
 
 // These have the same { name, inputSchema } shape supplied by MCP listTools.
@@ -39,6 +40,78 @@ const RUNTIME_TOOL_DESCRIPTORS = [
     },
   },
 ];
+
+const [observedMain, observedAux] = JSON.parse(fs.readFileSync(
+  new URL('./fixtures/live-window-structure-20260928.json', import.meta.url), 'utf8'));
+const observedV2 = JSON.parse(fs.readFileSync(
+  new URL('./fixtures/live-window-structure-v2-20260928.json', import.meta.url), 'utf8'));
+const liveMain = observedV2.find(row => row.window.window_id === 68616);
+const liveAux = observedV2.find(row => row.window.window_id !== 68616);
+const minimizedMain = JSON.parse(fs.readFileSync(
+  new URL('./fixtures/minimized-window-structure-20260928.json', import.meta.url), 'utf8'))[0];
+const sameSizedPopup = {
+  window: { ...observedMain.window, window_id: 90001 },
+  elements: [
+    { element_index: 0, role: 'Window', frame: { ...observedMain.elements[0].frame } },
+    { element_index: 1, parent_index: 0, role: 'Group', frame: { x: 1112, y: 91, w: 302, h: 1269 } },
+    { element_index: 2, parent_index: 1, role: 'Edit', frame: { x: 1124, y: 103, w: 244, h: 38 } },
+    { element_index: 3, parent_index: 1, role: 'List', frame: { x: 1112, y: 149, w: 302, h: 1131 } },
+  ],
+  stateMeta: { elements_complete:true, total_element_count:4 },
+};
+
+function windowApi(rows) {
+  const calls = [];
+  return { calls, async call(name, args) {
+    calls.push({ name, args });
+    if (name === 'list_windows') return { windows: rows.map(row => row.window) };
+    if (name === 'get_window_state') {
+      const row = rows.find(item => item.window.window_id === args.window_id);
+      assert.ok(row, 'only listed windows may be inspected');
+      assert.equal(args.include_screenshot, false);
+      return { elements: row.elements, ...row.stateMeta };
+    }
+    assert.fail(`unexpected UI input: ${name}`);
+  } };
+}
+
+test('sanitized live shell distinguishes empty main window from same-title auxiliary windows', async () => {
+  assert.equal(liveMain.stateMeta.elements_complete, false);
+  assert.equal(hasMainLineShell(liveMain.window,
+    { elements: liveMain.elements, ...liveMain.stateMeta }), true);
+  assert.equal(hasMainLineShell(liveAux.window,
+    { elements: liveAux.elements, ...liveAux.stateMeta }), false);
+  assert.equal(minimizedMain.window.minimized, true);
+  assert.equal(hasMainLineShell(minimizedMain.window,
+    { elements: minimizedMain.elements, ...minimizedMain.stateMeta }), true);
+  assert.equal(hasMainLineShell(sameSizedPopup.window, { elements: sameSizedPopup.elements }), false);
+  const ghost = { window: { ...observedAux.window, window_id: 90002 }, elements: [] };
+  const api = windowApi([liveAux, ghost, liveMain, sameSizedPopup]);
+  assert.equal((await mainLineWindow(api)).window_id, liveMain.window.window_id);
+  assert.ok(api.calls.every(call => ['list_windows', 'get_window_state'].includes(call.name)));
+  assert.equal((await mainLineWindow(windowApi([liveAux, minimizedMain]))).window_id,
+    minimizedMain.window.window_id);
+});
+
+test('selection refuses zero, two, incomplete or wrong main shells without input', async () => {
+  const secondMain = { window: { ...liveMain.window, window_id: 90003 },
+    elements: liveMain.elements, stateMeta:liveMain.stateMeta };
+  for (const [rows, count] of [
+    [[liveAux, sameSizedPopup], 0],
+    [[sameSizedPopup], 0],
+    [[liveMain, secondMain], 2],
+  ]) {
+    const api = windowApi(rows);
+    await assert.rejects(mainLineWindow(api), error =>
+      error?.code === 'LINE_TARGET_NOT_UNIQUE' && error.details.candidateCount === count);
+    assert.ok(api.calls.every(call => ['list_windows', 'get_window_state'].includes(call.name)));
+  }
+  const incompletePopup = { ...sameSizedPopup,
+    stateMeta:{ elements_complete:false, total_element_count:sameSizedPopup.elements.length } };
+  const api = windowApi([liveMain, incompletePopup]);
+  await assert.rejects(mainLineWindow(api), error => error?.code === 'LINE_TARGET_NOT_UNIQUE'
+    && error.details.candidateCount === 1 && error.details.inconclusiveCount === 1);
+});
 
 function countedAjv() {
   const Ajv = runtimeRequire()('ajv');

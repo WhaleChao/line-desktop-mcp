@@ -86,6 +86,11 @@ AcquireExactLineTarget(expectedHwnd := 0, expectedTitle := "LINE", expectedPid :
   target := matches[1]
   if !DllCall("IsWindowEnabled", "Ptr", target.hwnd, "Int")
     LINE_GUARD_FAIL("LINE_MODAL_OPEN")
+  if (expectedHwnd && WinGetMinMax("ahk_id " target.hwnd) = -1) {
+    WinRestore "ahk_id " target.hwnd
+    if (WinGetMinMax("ahk_id " target.hwnd) = -1)
+      LINE_GUARD_FAIL("LINE_RESTORE_FAILED")
+  }
   WinActivate "ahk_id " target.hwnd
   if !WinWaitActive("ahk_id " target.hwnd,, 2)
     LINE_GUARD_FAIL("LINE_FOCUS_UNAVAILABLE")
