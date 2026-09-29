@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 
-import { navigationOcrRegion, searchResultsOcrRegion, mixedDirectSearchOcrRegions, rebaseScopedOcr,
+import { navigationOcrRegion, searchResultsOcrRegion, singleDirectSearchOcrRegion,
+  mixedDirectSearchOcrRegions, rebaseScopedOcr,
   recognizeScopedLineImage, combineNavigationAndResults } from '../src/extensions/line-scoped-ocr.mjs';
 import { exactCategoryTab } from '../src/extensions/line-category-tab.mjs';
-import { exactSearchResult } from '../src/extensions/line-exact-search.mjs';
+import { exactSearchResult, singleDirectSearchCandidate } from '../src/extensions/line-exact-search.mjs';
 
 const main=JSON.parse(fs.readFileSync(
   new URL('./fixtures/live-window-structure-v2-20260928.json',import.meta.url),'utf8'))
@@ -112,4 +113,86 @@ test('mixed direct OCR stops at the message header and isolates the full chat ti
   assert.ok(regions.title.y+regions.title.height<regions.messageHeaderTop);
   assert.throws(()=>mixedDirectSearchOcrRegions(state,{bounds},size,'Stale Chat'),
     {code:'LINE_OCR_INVALID_REGION'});
+});
+
+function singleDirectSearch() {
+  const name='Synthetic Recipient';
+  const bounds={x:1050,y:19,width:1100,height:1400};
+  const size={width:1098,height:1398};
+  const item=(element_index,role,parent_index,x,y,w,h,extra={})=>({
+    element_index,role,parent_index,frame:{x,y,w,h},...extra});
+  const elements=[
+    item(0,'Window',undefined,1050,19,1100,1400),
+    item(15,'Group',12,1170,30,34,35),
+    item(16,'Group',15,1170,34,28,31),
+    item(17,'Group',16,1170,63,26,2),
+    item(57,'List',56,1112,116,302,1223),
+    item(58,'ListItem',57,1112,116,302,34),
+    item(59,'ListItem',57,1112,150,302,71),
+    item(61,'Edit',60,1124,82,264,38,{value:name}),
+  ];
+  const state={elements,screenshot_width:size.width,screenshot_height:size.height,
+    total_element_count:elements.length,returned_element_count:elements.length};
+  const nav={coordinateSpace:'input-png-pixels',scaleFactor:1,...size,lines:[
+    {text:'好友',x:119,y:16,width:26,height:13,
+      words:[{text:'好友',x:119,y:16,width:26,height:13}]},
+  ]};
+  return {name,state,window:{bounds},size,nav};
+}
+
+test('single direct search OCR crops only the count header; unreadable result title remains navigable',async()=>{
+  const {name,state,window,size,nav}=singleDirectSearch();
+  const region=singleDirectSearchOcrRegion(state,window,size,name);
+  const resultTop=Math.floor((150-window.bounds.y)*size.height/window.bounds.height);
+  assert.deepEqual(region,{x:61,y:96,width:303,height:34});
+  assert.ok(region.y+region.height<=resultTop);
+  const count=await recognizeScopedLineImage({},region,size,{
+    crop:async(_image,observed,options)=>{
+      assert.deepEqual(observed,region);
+      assert.deepEqual(options,{includeImage:true});
+      return {region,width:region.width,height:region.height,image:{tag:'count-only'}};
+    },
+    recognize:async image=>{
+      assert.equal(image.tag,'count-only');
+      return recognized(region,[{text:'聊 1',x:19,y:18,width:31,height:12,words:[]}]);
+    },
+  });
+  const ocr=combineNavigationAndResults(nav,count,size);
+  assert.deepEqual(ocr.lines.map(line=>line.text),['好友','聊 1']);
+  assert.equal(singleDirectSearchCandidate(state,window,size,ocr,name).element_index,59);
+});
+
+test('single direct count crop refuses changed query, extra result row, and invalid screenshot bounds',()=>{
+  const mutations=[
+    sample=>{sample.state.elements.find(item=>item.role==='Edit').value='Different';},
+    sample=>{sample.state.elements.push({element_index:60,parent_index:57,role:'ListItem',
+      frame:{x:1112,y:221,w:302,h:71}});
+      sample.state.total_element_count++;sample.state.returned_element_count++;},
+    sample=>{sample.size.width=100;sample.state.screenshot_width=100;},
+  ];
+  for(const mutate of mutations){
+    const sample=singleDirectSearch();mutate(sample);
+    assert.throws(()=>singleDirectSearchOcrRegion(sample.state,sample.window,
+      sample.size,sample.name),{code:'LINE_OCR_INVALID_REGION'});
+  }
+});
+
+test('single direct count OCR still refuses missing, wrong, ambiguous count or inactive Friends tab',()=>{
+  const mutations=[
+    ocr=>{ocr.lines.splice(1,1);},
+    ocr=>{ocr.lines[1].text='聊 2';},
+    ocr=>{ocr.lines.push({...ocr.lines[1]});},
+    (ocr,state)=>{state.elements=state.elements.filter(item=>item.element_index!==17);
+      state.total_element_count--;state.returned_element_count--;},
+  ];
+  for(const mutate of mutations){
+    const {name,state,window,size,nav}=singleDirectSearch();
+    const region=singleDirectSearchOcrRegion(state,window,size,name);
+    const count=rebaseScopedOcr(recognized(region,[
+      {text:'聊 1',x:19,y:18,width:31,height:12,words:[]}]),region,size);
+    const ocr=combineNavigationAndResults(nav,count,size);
+    mutate(ocr,state);
+    assert.throws(()=>singleDirectSearchCandidate(state,window,size,ocr,name),
+      {code:'LINE_SEARCH_NOT_UNIQUE'});
+  }
 });

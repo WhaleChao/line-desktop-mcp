@@ -7,7 +7,7 @@ import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDir
 import { hasBoundDirectRefs, boundDirectScope, inspectBoundDirect } from './line-bound-direct.mjs';
 import { mainLineWindow, snapshot, elementTarget } from './cua-line-client.mjs';
 import { purepngDimensions } from './line-ocr.mjs';
-import { navigationOcrRegion, searchResultsOcrRegion, mixedDirectSearchOcrRegions,
+import { navigationOcrRegion, searchResultsOcrRegion, singleDirectSearchOcrRegion, mixedDirectSearchOcrRegions,
   recognizeScopedLineImage,
   combineNavigationAndResults } from './line-scoped-ocr.mjs';
 import { exactCategoryTab } from './line-category-tab.mjs';
@@ -109,6 +109,15 @@ export async function openExactChat(ui, api, chatName, chatType, check) {
           && frame(e)?.y===layout.geometry.list.y && frame(e)?.height===layout.geometry.list.height);
         const rows=state.elements.filter(e=>e.role==='ListItem'
           && e.parent_index===list?.element_index).sort((a,b)=>frame(a).y-frame(b).y);
+        if(chatType==='direct' && rows.length===2) {
+          try {
+            const category=await recognizeScopedLineImage(image,
+              singleDirectSearchOcrRegion(state,window,dimensions,chatName),dimensions);
+            result=singleDirectSearchCandidate(state,window,dimensions,
+              combineNavigationAndResults(nav,category,dimensions),chatName);
+          } catch { result=null; }
+          if(result) break;
+        }
         const mixed=chatType==='direct' && rows.slice(2).some(e=>frame(e).height<45);
         if(mixed) {
           const regions=mixedDirectSearchOcrRegions(state,window,dimensions,chatName);

@@ -1,7 +1,7 @@
 import { LineToolError } from './line-runtime.mjs';
 import { fingerprintLineRegion, recognizeLineImage } from './line-ocr.mjs';
 import { directSearchLayout } from './line-group-navigation.mjs';
-import { mixedDirectSearchStructure } from './line-exact-search.mjs';
+import { mixedDirectSearchStructure, singleGroupSearchCandidate } from './line-exact-search.mjs';
 
 const invalid = () => { throw new LineToolError('LINE_OCR_INVALID_REGION',
   'The current LINE screenshot does not prove a bounded navigation or complete result region.'); };
@@ -64,6 +64,19 @@ export function searchResultsOcrRegion(state, window, dimensions) {
     (list.x+list.width-root.x)*scaleX,(bottom-root.y)*scaleY,dimensions);
   if(region.y<50 || !inside(layout.region,region)) invalid();
   return region;
+}
+
+/** A single direct result needs the category/count independently of its
+ * preview. Whole-row OCR can omit a faint category beside a green title.
+ * Structural uniqueness only permits navigation; the caller still verifies
+ * the selected Friends tab, count and detached full title. */
+export function singleDirectSearchOcrRegion(state, window, dimensions, chatName) {
+  try { singleGroupSearchCandidate(state, window, dimensions, chatName); }
+  catch { invalid(); }
+  const {root,scaleX,scaleY,category}=directSearchLayout(state,window,dimensions).geometry;
+  return pixels((category.x-root.x)*scaleX,(category.y-root.y)*scaleY,
+    (category.x+category.width-root.x)*scaleX,
+    Math.floor((category.y+category.height-root.y)*scaleY),dimensions);
 }
 
 /** In a mixed direct search, OCR the two section labels and the chat title
