@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.3.4 — 2026-09-29 (Asia/Taipei)
+
+- Recognize a single direct-chat result's category/count in its own screenshot-bound crop. Whole-result OCR could omit a faint chat category beside a highlighted title and falsely reject an otherwise unique search.
+- Preserve the selected Friends tab, exact query, single result/count, exact detached title and bound account/chat checks. Ordinary Friends results and mixed chat/message searches retain their existing paths. No dependency, public schema, draft or send-journal changes.
+
+Validation: eight scoped-OCR tests and 45 related search, send and identity tests passed (53 total). An authorized live preparation reproduced the old refusal, then opened the exact detached direct-chat window with matching local account/chat references and an empty composer; no message input or send occurred. This is a navigation fix, not a new green-text or color identity detector. Full Node/Python suites were not rerun; no new broad security scan is claimed. [Release notes](docs/releases/v3.3.4.en.md).
+
 ## 3.3.3 — 2026-09-29 (Asia/Taipei)
 
 - Fix groups missing from recent-chat results when LINE also records their generic `_chat` index row. Only `_midType=0` rows are direct identities; a normal group index no longer creates a false direct/group conflict.

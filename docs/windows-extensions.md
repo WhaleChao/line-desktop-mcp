@@ -1,6 +1,6 @@
-# Windows tool contract — v3.3.3
+# Windows tool contract — v3.3.4
 
-[Overview](README.en.md) · [Installation](quickstart-windows.md) · [Upgrade to v3.3.3](MIGRATING.md#upgrading-to-v333) · [Release notes](releases/README.md)
+[Overview](README.en.md) · [Installation](quickstart-windows.md) · [Upgrade to v3.3.4](MIGRATING.md#upgrading-to-v334) · [Release notes](releases/README.md)
 
 LINE Agent MCP is the display name of the Windows community edition in `bensonmaxai/line-desktop-mcp`. v3.3.0 adds selected recipient/account binding, recent-chat metadata and original-message forwarding to the scoped reader and local send receipts. The MCP server/package identity remains `line-desktop-mcp`. It is an unofficial local bridge to a signed-in LINE Desktop.
 
@@ -9,6 +9,8 @@ v3.3.1 fixes group search navigation when the list label or truncated title prev
 v3.3.2 uses exact word-level OCR for category tabs, with a direct-chat one-result navigation path only when the exact query, selected Friends tab, one counted chat row, separate from message-history hits, and exact full detached title agree. A LINE main window requires the complete positive UIA navigation rail, sidebar, split pane, divider, search and list structure; ambiguous auxiliary windows refuse. A minimized window is restored from a structurally proven exact HWND/PID/title and rechecked afterward. Cropped search-results OCR comes from the same observed screenshot and maps coordinates back to the full image. These are navigation and window checks, not direct HWND-to-DB identity mapping; Qt UIA can be partial, and unresolved cases refuse. Green highlighting alone is not identity proof. A live mixed Friends search with one chat and four separate message-history hits reached the exact detached title, refreshed local identity and an empty composer without typing or sending; an initial category OCR observation refused transiently and retry succeeded after fresh valid navigation proof. Tool schemas and send journals are unchanged. [v3.3.2 validation and limits](releases/v3.3.2.en.md).
 
 v3.3.3 changes the metadata-only recent-chat picker: `_chat` is a generic index, so only `_midType=0` rows count as direct identities. A group with a normal `_midType=2` index row is no longer excluded as a false direct/group conflict. Real name/type conflicts still refuse. No send, window, search, schema, dependency or journal contract changes. [Focused validation](releases/v3.3.3.en.md).
+
+v3.3.4 reads the single direct-search chat category/count from a separate crop of the same observed screenshot when whole-results OCR omits the faint header. Existing single-direct navigation checks run first; ordinary Friends and mixed-result paths remain. Selected tab, exact query, one count/row, detached exact title and local account/chat identity still gate input. Highlight color or text alone is not a new identity verifier. Public schemas, dependencies, drafts and send journals are unchanged. [Focused validation](releases/v3.3.4.en.md).
 
 ## Connection and compatibility
 

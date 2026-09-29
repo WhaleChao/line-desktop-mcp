@@ -1,8 +1,14 @@
-# Upgrade to v3.3.3
+# Upgrade to v3.3.4
 
 [Project home](../README.md) · [Windows installation](quickstart-windows.md) · [Features](features.md)
 
-LINE Agent MCP v3.3.3 retains the `line-desktop-mcp` package and MCP server identity. Distribution is through a GitHub source tag, release `.tgz` and `SHA256SUMS.txt`, without npm-registry or MCPB publication. LINE account and chat data do not migrate.
+LINE Agent MCP v3.3.4 retains the `line-desktop-mcp` package and MCP server identity. It is distributed through a GitHub source tag, attached `.tgz` and `SHA256SUMS.txt`, without npm-registry or MCPB publication. LINE account and chat data do not migrate.
+
+## Upgrading to v3.3.4
+
+Install tag `v3.3.4` or its archive in a new directory with `npm ci --ignore-scripts`. Keep the previous installation and send journals for rollback, preserve Python, SQLite3MC, CUA and AutoHotkey settings, switch the server path, then reconnect. Expect version `3.3.4` and 33 active Windows tools with extensions enabled.
+
+The single-direct search path now reads a faint chat category/count from a separate crop of the same observed screenshot when whole-results OCR omits it. Existing single-direct navigation checks run first. The selected Friends tab, exact query, one result/count, exact detached title and local account/chat binding remain required; no new green-title identity verifier is added. Ordinary Friends and mixed searches keep their paths. Focused tests and one live preparation passed without message input or send; no full Node/Python rerun is claimed. [Validation and limits](releases/v3.3.4.en.md).
 
 ## Upgrading to v3.3.3
 
