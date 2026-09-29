@@ -109,9 +109,28 @@ test('mixed direct OCR stops at the message header and isolates the full chat ti
   const regions=mixedDirectSearchOcrRegions(state,{bounds},size,'Synthetic Chat');
   const firstMessageTop=Math.floor((255-bounds.y)*size.height/bounds.height);
   assert.equal(regions.headers.y+regions.headers.height,firstMessageTop);
+  assert.ok(regions.chatHeader.y+regions.chatHeader.height<=regions.title.y);
+  assert.equal(regions.messageHeader.y+regions.messageHeader.height,firstMessageTop);
+  assert.ok(regions.title.height>=35 && regions.title.height<=36);
   assert.ok(regions.title.y>=regions.headers.y);
   assert.ok(regions.title.y+regions.title.height<regions.messageHeaderTop);
   assert.throws(()=>mixedDirectSearchOcrRegions(state,{bounds},size,'Stale Chat'),
+    {code:'LINE_OCR_INVALID_REGION'});
+});
+
+test('scoped padded OCR preserves original crop coordinates and refuses padding-only evidence',async()=>{
+  const region={x:62,y:202,width:301,height:33};
+  const crop=async()=>({region,width:region.width,height:region.height,image:{tag:'header'}});
+  const valid=await recognizeScopedLineImage({},region,dimensions,{crop,paddingPixels:16,
+    recognize:async(image,options)=>{
+      assert.equal(image.tag,'header');assert.deepEqual(options,{paddingPixels:16});
+      return recognized(region,[{text:'訊 4',x:18,y:20,width:33,height:12,words:[]}]);
+    }});
+  assert.equal(valid.lines[0].x,80);assert.equal(valid.lines[0].y,222);
+  await assert.rejects(recognizeScopedLineImage({},region,dimensions,{crop,paddingPixels:16,
+    recognize:async()=>recognized(region,[{text:'訊 4',x:18,y:28,width:33,height:12,words:[]}])}),
+    {code:'LINE_OCR_INVALID_REGION'});
+  await assert.rejects(recognizeScopedLineImage({},region,dimensions,{crop,paddingPixels:33}),
     {code:'LINE_OCR_INVALID_REGION'});
 });
 

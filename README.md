@@ -8,7 +8,9 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[v3.3.4 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[v3.3.5 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+
+**v3.3.5 — 混合搜尋 OCR 修正：** 分類各自裁切、補足標題範圍與 OCR 白邊，避免唯一聊天室因分類標頭漏讀被拒絕；完整名稱與身分核對不變。[更新說明](docs/releases/v3.3.5.zh-TW.md)
 
 **v3.3.4 — 單筆個人搜尋修正：** 搜尋結果 OCR 漏掉較淡的分類／筆數時，從同一截圖另外裁切辨識；完整視窗標題和本機身分核對仍須通過。[更新說明](docs/releases/v3.3.4.zh-TW.md)
 
@@ -56,7 +58,7 @@ Windows 啟用 `LINE_MCP_EXTENSIONS=1` 後列出 **33 個目前使用的工具**
 ## 安裝與升級
 
 ```powershell
-git clone --branch v3.3.4 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.5 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```

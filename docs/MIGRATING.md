@@ -1,8 +1,14 @@
-# Upgrade to v3.3.4
+# Upgrade to v3.3.5
 
 [Project home](../README.md) · [Windows installation](quickstart-windows.md) · [Features](features.md)
 
-LINE Agent MCP v3.3.4 retains the `line-desktop-mcp` package and MCP server identity. It is distributed through a GitHub source tag, attached `.tgz` and `SHA256SUMS.txt`, without npm-registry or MCPB publication. LINE account and chat data do not migrate.
+LINE Agent MCP v3.3.5 keeps the `line-desktop-mcp` package and MCP server identity. Distribution uses a GitHub source tag, attached `.tgz` and `SHA256SUMS.txt`, without npm-registry or MCPB publication. LINE account and chat data do not migrate.
+
+## Upgrading to v3.3.5
+
+Install tag `v3.3.5` or its archive in a new directory with `npm ci --ignore-scripts`. Keep the previous installation and send journals for rollback, preserve Python, SQLite3MC, CUA and AutoHotkey settings, switch the server path, then reconnect. Expect version `3.3.5` and 33 active Windows tools with extensions enabled.
+
+Mixed chat/message search now crops each category from its own UIA row: the prior 30px title crop had insufficient bottom margin for the complete name, while edge-clipped category OCR could miss header characters or the count. It reads a 35px title area and may use a 16px white OCR margin. Coordinates map back to the original screenshot and out-of-bounds evidence refuses. Exact name, selected tab, query, chat count, detached title, local account/chat binding and send guards remain required. Sixty-one related tests passed with zero failures. Five real main-window cold searches across three authorized direct chats reached READY with exact detached titles, matching local identities and empty composers; none entered or sent a message. [Validation and limits](releases/v3.3.5.en.md).
 
 ## Upgrading to v3.3.4
 

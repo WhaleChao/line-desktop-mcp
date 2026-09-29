@@ -72,6 +72,14 @@ test('rejects OCR geometry that is not relative to the supplied screenshot', () 
     }),
     { code: 'LINE_OCR_PROTOCOL_ERROR' },
   );
+  for (const x of [-2, 98]) {
+    assert.throws(() => normalizeOcrResult({
+      success: true, width: 100, height: 33, language: 'zh-Hant-TW',
+      lines: [{text:'Margin',x,y:5,width:4,height:10,
+        words:[{text:'Margin',x,y:5,width:4,height:10}]}],
+    }), {code:'LINE_OCR_PROTOCOL_ERROR'},
+    'margin-only or crossing OCR geometry must fail instead of being clipped');
+  }
 });
 
 test('matches only exact canonical multiline labels and preserves emoji', () => {
@@ -205,11 +213,29 @@ test('runs Windows.Media.Ocr against a generated local business-neutral PNG', { 
   assert.ok(canonicalOcrText(recognizedText).length > 0, 'expected OCR to return text from the generated PNG');
   assert.match(recognizedText.replace(/\s+/gu, ''), /測試/u, 'expected the local zh-Hant engine to return the generated Taiwan Chinese label');
   assert.doesNotMatch(recognizedText, /\uFFFD/u, 'PowerShell JSON output must stay UTF-8 instead of producing replacement characters');
+  const explicitZero=await recognizeLineImage(imageContent,{paddingPixels:0,timeoutMs:20_000});
+  assert.deepEqual(explicitZero,result,'paddingPixels:0 keeps the existing OCR result');
   for (const line of result.lines) {
     assert.ok(line.x >= 0 && line.y >= 0);
     assert.ok(line.x + line.width <= result.width + 0.001);
     assert.ok(line.y + line.height <= result.height + 0.001);
   }
+  const padded=await recognizeLineImage(imageContent,{paddingPixels:16,timeoutMs:20_000});
+  assert.equal(padded.width,800);
+  assert.equal(padded.height,260);
+  assert.equal(padded.coordinateSpace,'input-png-pixels');
+  assert.equal(padded.scaleFactor,1);
+  assert.match(padded.lines.map(line=>line.text).join('').replace(/\s+/gu,''),/測試/u);
+  for(const line of padded.lines){
+    assert.ok(line.x>=0 && line.y>=0 && line.x+line.width<=800.001
+      && line.y+line.height<=260.001,'padding is removed without clipping original geometry');
+  }
+  await assert.rejects(recognizeLineImage(imageContent,{paddingPixels:33}),
+    {code:'LINE_OCR_INVALID_ARGUMENT'});
+  await assert.rejects(recognizeLineImage(imageContent,{paddingPixels:0.5}),
+    {code:'LINE_OCR_INVALID_ARGUMENT'});
+  await assert.rejects(recognizeLineImage(imageContent,{paddingPixels:16,maxDimension:820}),
+    {code:'LINE_OCR_IMAGE_TOO_LARGE'});
   await assert.rejects(
     recognizeLineImage(imageContent, { maxDimension: 100, timeoutMs: 20_000 }),
     { code: 'LINE_OCR_IMAGE_TOO_LARGE' },

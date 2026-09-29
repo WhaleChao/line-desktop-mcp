@@ -4,6 +4,7 @@ param(
     [ValidateRange(1, 10485760)][int]$MaxBytes = 10485760,
     [ValidateRange(1, 4096)][int]$MaxDimension = 4096,
     [ValidateRange(1, 4)][int]$UpscaleFactor = 2,
+    [Parameter(ParameterSetName = 'Ocr')][ValidateRange(0, 32)][int]$PaddingPixels = 0,
     [ValidatePattern('^[A-Za-z-]+(?:,[A-Za-z-]+)*$')][string]$PreferredLanguages = 'zh-Hant,en',
     [Parameter(ParameterSetName = 'Fingerprint', Mandatory = $true)][switch]$FingerprintRegion,
     [Parameter(ParameterSetName = 'Fingerprint', Mandatory = $true)][ValidateRange(0, 2147483647)][int]$RegionX,
@@ -63,6 +64,29 @@ function Get-ImageDimensions {
         return [ordered]@{ width = [int]$image.Width; height = [int]$image.Height }
     } finally {
         if ($null -ne $image) { $image.Dispose() }
+    }
+}
+
+function New-PaddedOcrInput {
+    param([string]$Path, [int]$Padding)
+    Add-Type -AssemblyName System.Drawing
+    $source = $null
+    $padded = $null
+    $graphics = $null
+    $outputPath = Join-Path ([System.IO.Path]::GetDirectoryName($Path)) ("padded-$([guid]::NewGuid().ToString('N')).png")
+    try {
+        $source = [System.Drawing.Bitmap]::new($Path)
+        $padded = [System.Drawing.Bitmap]::new(($source.Width + 2 * $Padding), ($source.Height + 2 * $Padding), [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $graphics = [System.Drawing.Graphics]::FromImage($padded)
+        $graphics.Clear([System.Drawing.Color]::White)
+        $graphics.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+        $graphics.DrawImageUnscaled($source, $Padding, $Padding)
+        $padded.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        return $outputPath
+    } finally {
+        if ($null -ne $graphics) { $graphics.Dispose() }
+        if ($null -ne $padded) { $padded.Dispose() }
+        if ($null -ne $source) { $source.Dispose() }
     }
 }
 
@@ -257,8 +281,21 @@ if ($null -eq $engine) {
 
 $stream = $null
 $bitmap = $null
+$paddedInputPath = $null
 try {
-    $storageFile = Invoke-WinRtAsync ([Windows.Storage.StorageFile]::GetFileFromPathAsync($fullInputPath)) ([Windows.Storage.StorageFile])
+    $width = [int]$sourceDimensions.width
+    $height = [int]$sourceDimensions.height
+    $ocrInputWidth = [int64]$width + 2 * [int64]$PaddingPixels
+    $ocrInputHeight = [int64]$height + 2 * [int64]$PaddingPixels
+    if ($ocrInputWidth -gt $MaxDimension -or $ocrInputHeight -gt $MaxDimension) {
+        Stop-Ocr 'LINE_OCR_IMAGE_TOO_LARGE' "The padded OCR image exceeds the $MaxDimension-pixel dimension limit."
+    }
+    $ocrInputPath = $fullInputPath
+    if ($PaddingPixels -gt 0) {
+        $paddedInputPath = New-PaddedOcrInput -Path $fullInputPath -Padding $PaddingPixels
+        $ocrInputPath = $paddedInputPath
+    }
+    $storageFile = Invoke-WinRtAsync ([Windows.Storage.StorageFile]::GetFileFromPathAsync($ocrInputPath)) ([Windows.Storage.StorageFile])
     $reference = [Windows.Storage.Streams.RandomAccessStreamReference]::CreateFromFile($storageFile)
     $stream = Invoke-WinRtAsync ($reference.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
     $createDecoderMethod = [Windows.Graphics.Imaging.BitmapDecoder].GetMethods() |
@@ -268,20 +305,18 @@ try {
     $createDecoderArgs = New-Object object[] 1
     $createDecoderArgs[0] = $stream
     $decoder = Invoke-WinRtAsync ($createDecoderMethod.Invoke($null, $createDecoderArgs)) ([Windows.Graphics.Imaging.BitmapDecoder])
-    $width = [int]$sourceDimensions.width
-    $height = [int]$sourceDimensions.height
     $ocrScaleFactor = 1
     $maxOcrDimension = [int][Windows.Media.Ocr.OcrEngine]::MaxImageDimension
-    $scaledWidth = [int64]$width * [int64]$UpscaleFactor
-    $scaledHeight = [int64]$height * [int64]$UpscaleFactor
+    $scaledWidth = $ocrInputWidth * [int64]$UpscaleFactor
+    $scaledHeight = $ocrInputHeight * [int64]$UpscaleFactor
     if ($UpscaleFactor -gt 1 -and $scaledWidth -le $maxOcrDimension -and $scaledHeight -le $maxOcrDimension) {
         $ocrScaleFactor = $UpscaleFactor
     }
 
     if ($ocrScaleFactor -gt 1) {
         $transform = New-Object Windows.Graphics.Imaging.BitmapTransform
-        $transform.ScaledWidth = [uint32]($width * $ocrScaleFactor)
-        $transform.ScaledHeight = [uint32]($height * $ocrScaleFactor)
+        $transform.ScaledWidth = [uint32]($ocrInputWidth * $ocrScaleFactor)
+        $transform.ScaledHeight = [uint32]($ocrInputHeight * $ocrScaleFactor)
         $transform.InterpolationMode = [Windows.Graphics.Imaging.BitmapInterpolationMode]::Fant
         $getScaledBitmapMethod = [Windows.Graphics.Imaging.BitmapDecoder].GetMethods() |
             Where-Object { $_.Name -eq 'GetSoftwareBitmapAsync' -and $_.GetParameters().Count -eq 5 } |
@@ -302,7 +337,7 @@ try {
     if ($ocrWidth -lt 1 -or $ocrHeight -lt 1 -or $ocrWidth -gt $maxOcrDimension -or $ocrHeight -gt $maxOcrDimension) {
         Stop-Ocr 'LINE_OCR_IMAGE_TOO_LARGE' "The decoded OCR image exceeds the $maxOcrDimension-pixel OCR engine dimension limit."
     }
-    if ($ocrWidth -ne ($width * $ocrScaleFactor) -or $ocrHeight -ne ($height * $ocrScaleFactor)) {
+    if ($ocrWidth -ne ($ocrInputWidth * $ocrScaleFactor) -or $ocrHeight -ne ($ocrInputHeight * $ocrScaleFactor)) {
         throw 'Windows.Media.Ocr returned an unexpected scaled bitmap size.'
     }
     $recognition = Invoke-WinRtAsync ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
@@ -314,12 +349,13 @@ try {
             $rect = $ocrWord.BoundingRect
             $words.Add([ordered]@{
                 text = [string]$ocrWord.Text
-                x = [double]$rect.X / $ocrScaleFactor
-                y = [double]$rect.Y / $ocrScaleFactor
+                x = [double]$rect.X / $ocrScaleFactor - $PaddingPixels
+                y = [double]$rect.Y / $ocrScaleFactor - $PaddingPixels
                 width = [double]$rect.Width / $ocrScaleFactor
                 height = [double]$rect.Height / $ocrScaleFactor
             })
         }
+        if ($PaddingPixels -gt 0 -and $words.Count -eq 0) { throw 'Padded OCR returned a line without word geometry.' }
         $bounds = Get-UnionBounds @($words.ToArray())
         $lines.Add([ordered]@{
             text = [string]$ocrLine.Text
@@ -348,4 +384,5 @@ try {
 } finally {
     if ($null -ne $bitmap) { try { $bitmap.Dispose() } catch {} }
     if ($null -ne $stream) { try { $stream.Dispose() } catch {} }
+    if ($null -ne $paddedInputPath) { Remove-Item -LiteralPath $paddedInputPath -Force -ErrorAction SilentlyContinue }
 }

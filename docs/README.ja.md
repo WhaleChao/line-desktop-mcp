@@ -8,7 +8,9 @@
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[v3.3.4 リリースノート](releases/v3.3.4.ja.md) · [インストール](quickstart-windows.md) · [v3.3.4 へのアップグレード](MIGRATING.md#upgrading-to-v334) · [技術仕様](windows-extensions.md)
+[v3.3.5 リリースノート](releases/v3.3.5.ja.md) · [インストール](quickstart-windows.md) · [v3.3.5 へのアップグレード](MIGRATING.md#upgrading-to-v335) · [技術仕様](windows-extensions.md)
+
+**v3.3.5 — 混在検索 OCR：** カテゴリ別の画像切り出しと広いタイトル範囲で見落としを減らし、既存の身元確認を維持します。[詳細](releases/v3.3.5.ja.md)
 
 **v3.3.4 — 個人チャット単一検索の OCR：** 薄いカテゴリ／件数を別の画像切り出しで読み取り、完全なタイトルとローカルの身元照合を維持します。[詳細](releases/v3.3.4.ja.md)
 
@@ -50,17 +52,17 @@ Windows で `LINE_MCP_EXTENSIONS=1` を設定すると **33 個のアクティ�
 
 通常のテキスト下書きは Codex で確認します。エージェントは視覚的な UI チェックを実行しますが、実際のメンションや共有コンテンツの変更には、それぞれのワークフローと承認が引き続き必要です。計画があることは、操作が実行済みである証拠にはなりません。
 
-## インストールと v3.3.4 へのアップグレード
+## インストールと v3.3.5 へのアップグレード
 
-既存のリポジトリを v3.3.4 タグで別の作業ディレクトリに取得できます。
+既存のリポジトリを v3.3.5 タグで別の作業ディレクトリに取得できます。
 
 ```powershell
-git clone --branch v3.3.4 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.5 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
 
-既存の `line-desktop-mcp` から移行する場合は、まず現在の MCP クライアント設定をバックアップしてください。上の手順で v3.3.4 を新しい並列のソースディレクトリに取得し、既存の MCP 登録をそのディレクトリへ向け直します。以前のチェックアウト、ランチャー、設定はロールバック用に残してください。LINE アカウントやチャットデータを移行する必要はありません。
+既存の `line-desktop-mcp` から移行する場合は、まず現在の MCP クライアント設定をバックアップしてください。上の手順で v3.3.5 を新しい並列のソースディレクトリに取得し、既存の MCP 登録をそのディレクトリへ向け直します。以前のチェックアウト、ランチャー、設定はロールバック用に残してください。LINE アカウントやチャットデータを移行する必要はありません。
 
 Node.js 24 LTS 以降（検証済み: 24.19.0）と、利用するツールに応じて別途構成したランタイムコンポーネントを使用してください。ローカル読み取りには Windows x64、Python x64、`cryptography` と Pillow、固定された SQLite3MC DLL、明示的な `LINE_MCP_PYTHON` / `LINE_MCP_SQLITE3MC_DLL` が必要です。両方の Python パッケージは、メタデータのみのモードを含むすべてのローカル読み取りに必要です。v3.1.0 では標準 5 ツールを含む Windows の名前付きチャット GUI 操作にも、これらと `LINE_MCP_CUA_DRIVER` が必須です。最初にユーザーまたはガイド付き UI で承認済みチャットを開いてください。`open_line_chat` は自動検索しません。生の表示名は完全一致が必要で、NFC 同値、空白の圧縮／トリム、メンバー数の衝突パターンは安全側に拒否されます。必要に応じて AutoHotkey v2 とローカル Windows OCR を用います。詳細は[インストールガイド](quickstart-windows.md)を参照してください。
 
@@ -70,7 +72,7 @@ LINE Agent MCP は、この Windows 向けコミュニティ版の表示名で�
 
 本リリースはローカル stdio のみで動作し、HTTP/REST サーバーや有料クラウドサービスを提供しません。カレントディレクトリの `.env` は自動で読み込まず、MCP クライアントが明示的に渡す環境変数で構成します。
 
-GitHub の v3.3.4 リリースにある `line-desktop-mcp-3.3.4.tgz` と `SHA256SUMS.txt` を使用してください。本プロジェクトは npm レジストリには公開されず、MCPB バンドルも提供しません。旧い `line-desktop-mcp@latest` パッケージでは本リリースはインストールされません。
+GitHub の v3.3.5 リリースにある `line-desktop-mcp-3.3.5.tgz` と `SHA256SUMS.txt` を使用してください。本プロジェクトは npm レジストリには公開されず、MCPB バンドルも提供しません。旧い `line-desktop-mcp@latest` パッケージでは本リリースはインストールされません。
 
 ## 根拠と制限
 

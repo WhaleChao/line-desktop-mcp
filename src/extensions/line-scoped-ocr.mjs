@@ -79,8 +79,8 @@ export function singleDirectSearchOcrRegion(state, window, dimensions, chatName)
     Math.floor((category.y+category.height-root.y)*scaleY),dimensions);
 }
 
-/** In a mixed direct search, OCR the two section labels and the chat title
- * separately. The message-hit rows never enter either crop. */
+/** In a mixed direct search, isolate each section label and the complete
+ * title band. Neither previews nor message-hit rows enter these crops. */
 export function mixedDirectSearchOcrRegions(state, window, dimensions, chatName) {
   let structure;
   try { structure=mixedDirectSearchStructure(state,window,dimensions,chatName); }
@@ -90,11 +90,16 @@ export function mixedDirectSearchOcrRegions(state, window, dimensions, chatName)
   const header=frame(messageHeader), chat=frame(chatRow);
   const headers=pixels((list.x-root.x)*scaleX,(category.y-root.y)*scaleY,
     (list.x+list.width-root.x)*scaleX,Math.floor((header.y+header.height-root.y)*scaleY),dimensions);
+  const chatHeader=pixels((category.x-root.x)*scaleX,(category.y-root.y)*scaleY,
+    (category.x+category.width-root.x)*scaleX,Math.floor((category.y+category.height-root.y)*scaleY),dimensions);
+  const messageHeaderRegion=pixels((header.x-root.x)*scaleX,(header.y-root.y)*scaleY,
+    (header.x+header.width-root.x)*scaleX,Math.floor((header.y+header.height-root.y)*scaleY),dimensions);
   const title=pixels((chat.x+76-root.x)*scaleX,(chat.y-root.y)*scaleY,
-    (chat.x+chat.width-root.x)*scaleX,(chat.y+30-root.y)*scaleY,dimensions);
+    (chat.x+chat.width-root.x)*scaleX,(chat.y+35-root.y)*scaleY,dimensions);
   if(Math.abs(header.y-chat.y-chat.height)>4 || !inside(title,headers)
     || title.width<60 || title.height<18 || !inside(layout.region,headers)) invalid();
-  return {headers,title,messageHeaderTop:Math.floor((header.y-root.y)*scaleY)};
+  return {headers,chatHeader,messageHeader:messageHeaderRegion,title,
+    messageHeaderTop:Math.floor((header.y-root.y)*scaleY)};
 }
 
 /** OCR geometry is returned to original PNG coordinates before the existing
@@ -113,12 +118,14 @@ export function rebaseScopedOcr(ocr, region, dimensions) {
 }
 
 export async function recognizeScopedLineImage(image, region, dimensions, {
-  crop=fingerprintLineRegion, recognize=recognizeLineImage,
+  crop=fingerprintLineRegion, recognize=recognizeLineImage, paddingPixels=0,
 }={}) {
+  if(!Number.isSafeInteger(paddingPixels) || paddingPixels<0 || paddingPixels>32) invalid();
   const result=await crop(image,region,{includeImage:true});
   if(!result?.image || !same(result.region,region)
     || result.width!==region.width || result.height!==region.height) invalid();
-  return rebaseScopedOcr(await recognize(result.image),region,dimensions);
+  const ocr=paddingPixels ? await recognize(result.image,{paddingPixels}) : await recognize(result.image);
+  return rebaseScopedOcr(ocr,region,dimensions);
 }
 
 export function combineNavigationAndResults(nav, results, dimensions) {

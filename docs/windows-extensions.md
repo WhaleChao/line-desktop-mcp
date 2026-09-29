@@ -1,6 +1,6 @@
-# Windows tool contract — v3.3.4
+# Windows tool contract — v3.3.5
 
-[Overview](README.en.md) · [Installation](quickstart-windows.md) · [Upgrade to v3.3.4](MIGRATING.md#upgrading-to-v334) · [Release notes](releases/README.md)
+[Overview](README.en.md) · [Installation](quickstart-windows.md) · [Upgrade to v3.3.5](MIGRATING.md#upgrading-to-v335) · [Release notes](releases/README.md)
 
 LINE Agent MCP is the display name of the Windows community edition in `bensonmaxai/line-desktop-mcp`. v3.3.0 adds selected recipient/account binding, recent-chat metadata and original-message forwarding to the scoped reader and local send receipts. The MCP server/package identity remains `line-desktop-mcp`. It is an unofficial local bridge to a signed-in LINE Desktop.
 
@@ -11,6 +11,8 @@ v3.3.2 uses exact word-level OCR for category tabs, with a direct-chat one-resul
 v3.3.3 changes the metadata-only recent-chat picker: `_chat` is a generic index, so only `_midType=0` rows count as direct identities. A group with a normal `_midType=2` index row is no longer excluded as a false direct/group conflict. Real name/type conflicts still refuse. No send, window, search, schema, dependency or journal contract changes. [Focused validation](releases/v3.3.3.en.md).
 
 v3.3.4 reads the single direct-search chat category/count from a separate crop of the same observed screenshot when whole-results OCR omits the faint header. Existing single-direct navigation checks run first; ordinary Friends and mixed-result paths remain. Selected tab, exact query, one count/row, detached exact title and local account/chat identity still gate input. Highlight color or text alone is not a new identity verifier. Public schemas, dependencies, drafts and send journals are unchanged. [Focused validation](releases/v3.3.4.en.md).
+
+v3.3.5 reads each mixed-search category from its own UIA row and a 35px title crop. OCR may receive a 16px white margin, but coordinates are mapped back to the original image and out-of-bounds evidence refuses. A selected tab, exact query, one chat count, complete title, local account/chat identity and existing send guards remain necessary. This is not a new color-based identity check. [Focused validation](releases/v3.3.5.en.md).
 
 ## Connection and compatibility
 

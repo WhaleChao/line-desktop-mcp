@@ -121,10 +121,10 @@ export async function openExactChat(ui, api, chatName, chatType, check) {
         const mixed=chatType==='direct' && rows.slice(2).some(e=>frame(e).height<45);
         if(mixed) {
           const regions=mixedDirectSearchOcrRegions(state,window,dimensions,chatName);
-          const headers=await recognizeScopedLineImage(image,regions.headers,dimensions);
-          const title=await recognizeScopedLineImage(image,regions.title,dimensions);
-          const labels={...headers,lines:headers.lines.filter(line=>
-            line.y+line.height<=regions.title.y || line.y>=regions.messageHeaderTop)};
+          const category=await recognizeScopedLineImage(image,regions.chatHeader,dimensions,{paddingPixels:16});
+          const messages=await recognizeScopedLineImage(image,regions.messageHeader,dimensions,{paddingPixels:16});
+          const title=await recognizeScopedLineImage(image,regions.title,dimensions,{paddingPixels:16});
+          const labels={...category,lines:[...category.lines,...messages.lines]};
           const ocr=combineNavigationAndResults(nav,labels,dimensions);
           ocr.lines.push(...title.lines);
           result=mixedDirectSearchCandidate(state,window,dimensions,ocr,chatName);

@@ -38,7 +38,7 @@ export function purepngDimensions(imageContent) {
  * PNG, so callers can use them directly against that same screenshot.
  *
  * @param {{type?: string, data?: string, mimeType?: string, image_url?: string}} imageContent
- * @param {{maxBytes?: number, maxDimension?: number, timeoutMs?: number, upscaleFactor?: number, preferredLanguages?: string[]}} [options]
+ * @param {{maxBytes?: number, maxDimension?: number, timeoutMs?: number, upscaleFactor?: number, paddingPixels?: number, preferredLanguages?: string[]}} [options]
  * @returns {Promise<{width: number, height: number, language: string, coordinateSpace: 'input-png-pixels', scaleFactor: 1, ocrScaleFactor: number, lines: Array<{text: string, words: Array<{text: string, x: number, y: number, width: number, height: number}>, x: number, y: number, width: number, height: number}>}>}
  */
 export async function recognizeLineImage(imageContent, options = {}) {
@@ -310,7 +310,7 @@ function collectOcrLabelMatches(ocr, labels, limit = Infinity) {
 }
 
 async function invokeOcr(inputPath, config) {
-  return invokeOcrBridge(inputPath, config);
+  return invokeOcrBridge(inputPath, config, ['-PaddingPixels', String(config.paddingPixels)]);
 }
 
 async function invokeFingerprint(inputPath, region, config, options) {
@@ -423,6 +423,7 @@ function normalizeOptions(options) {
   const maxDimension = boundedInteger(options.maxDimension ?? LINE_OCR_DEFAULTS.maxDimension, 'maxDimension', 1, LINE_OCR_DEFAULTS.maxDimension);
   const timeoutMs = boundedInteger(options.timeoutMs ?? LINE_OCR_DEFAULTS.timeoutMs, 'timeoutMs', 1_000, 60_000);
   const upscaleFactor = boundedInteger(options.upscaleFactor ?? LINE_OCR_DEFAULTS.upscaleFactor, 'upscaleFactor', 1, 4);
+  const paddingPixels = boundedInteger(options.paddingPixels ?? 0, 'paddingPixels', 0, 32);
   const preferredLanguages = options.preferredLanguages ?? LINE_OCR_DEFAULTS.preferredLanguages;
   if (!Array.isArray(preferredLanguages) || preferredLanguages.length === 0) {
     throw new LineToolError('LINE_OCR_INVALID_ARGUMENT', 'preferredLanguages must be a nonempty array containing zh-Hant and/or en.');
@@ -434,7 +435,7 @@ function normalizeOptions(options) {
     return language;
   }))];
 
-  return { maxBytes, maxDimension, timeoutMs, upscaleFactor, preferredLanguages: normalizedLanguages };
+  return { maxBytes, maxDimension, timeoutMs, upscaleFactor, paddingPixels, preferredLanguages: normalizedLanguages };
 }
 
 function decodePngImageContent(imageContent, maxBytes) {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.3.5 — 2026-09-29 (Asia/Taipei)
+
+- Fix mixed chat/message search refusal when a 30px title crop leaves too little bottom margin to read the complete name, while edge-clipped OCR separately misses characters or the count in a category header. Read each category from its own UIA row, use a 35px title crop, and optionally add a 16px white OCR margin with coordinates mapped back to the source image; reject out-of-bounds evidence.
+- Preserve selected tab, exact query, one chat count, complete name, exact detached title, local account/chat binding, and send guards. No dependency, public-schema, draft or journal changes.
+
+Validation: 61 related tests passed with zero failures (54 scoped OCR, exact search, optimized send and send-target tests; seven native OCR tests). Five main-window cold searches across three authorized direct chats reached READY with exact detached titles, matching local identities and empty composers. No message was entered or sent. An independent bounded review found no blocking issue. [Release notes](docs/releases/v3.3.5.en.md).
+
 ## 3.3.4 — 2026-09-29 (Asia/Taipei)
 
 - Recognize a single direct-chat result's category/count in its own screenshot-bound crop. Whole-result OCR could omit a faint chat category beside a highlighted title and falsely reject an otherwise unique search.

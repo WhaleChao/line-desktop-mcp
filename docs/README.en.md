@@ -8,7 +8,9 @@ Choose a chat and date range. Let your AI assistant organize the conversation to
 
 [繁體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [ภาษาไทย](README.th.md) · [Bahasa Indonesia](README.id.md)
 
-[v3.3.4 release notes](releases/v3.3.4.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+[v3.3.5 release notes](releases/v3.3.5.en.md) · [Install](quickstart-windows.md) · [Technical contract](windows-extensions.md)
+
+**v3.3.5 — Mixed-search OCR:** Separate category crops and a wider title crop prevent missed headers from rejecting one exact chat; identity checks remain. [Details](releases/v3.3.5.en.md)
 
 **v3.3.4 — Single direct-search OCR:** Read a faint category/count in its own screenshot crop while preserving exact title and local identity checks. [Details](releases/v3.3.4.en.md)
 
@@ -53,7 +55,7 @@ Ordinary text drafts are reviewed in Codex. The agent performs visual UI checks;
 ## Install and migrate
 
 ```powershell
-git clone --branch v3.3.4 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
+git clone --branch v3.3.5 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git
 cd line-desktop-mcp
 npm ci --ignore-scripts
 ```
