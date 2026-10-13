@@ -1,4 +1,10 @@
-# v3.3.5 release notes
+# v3.3.6 release notes
+
+[繁體中文更新說明](v3.3.6.zh-TW.md) · [English release notes](v3.3.6.en.md)
+
+## Previous release
+
+### v3.3.5 release notes
 
 ![LINE Agent MCP](../assets/line-agent-cover-v3.png)
 

@@ -287,7 +287,7 @@ test('active catalogue is compact and versioned; legacy handlers remain callable
   assert.equal(extension.tools,ACTIVE_TOOL_DESCRIPTORS);
   const result=await extension.call('get_line_capabilities',{});
   const caps=JSON.parse(result.content[0].text);
-  assert.equal(caps.version,EXTENSION_VERSION);assert.equal(caps.toolCount,33);
+  assert.equal(caps.version,EXTENSION_VERSION);assert.equal(caps.toolCount,34);
   assert.deepEqual(caps.tools,extension.tools.map(tool=>tool.name));
   for(const name of ['prepare_line_group_chat','prepare_line_direct_chat','get_line_chatroom_history_short']){
     assert(!caps.tools.includes(name));assert(extension.handles(name));

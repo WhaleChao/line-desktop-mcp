@@ -4,7 +4,7 @@ import path from 'node:path';
 import { homedir } from 'node:os';
 import { LineToolError } from './line-runtime.mjs';
 import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDirectMessages, runReaderProcess } from './line-local-reader.mjs';
-import { hasBoundDirectRefs, boundDirectScope, inspectBoundDirect } from './line-bound-direct.mjs';
+import { hasBoundDirectRefs, boundDirectScope, confirmedBoundDirectScope, inspectBoundDirect } from './line-bound-direct.mjs';
 import { mainLineWindow, snapshot, elementTarget } from './cua-line-client.mjs';
 import { purepngDimensions } from './line-ocr.mjs';
 import { navigationOcrRegion, searchResultsOcrRegion, singleDirectSearchOcrRegion, mixedDirectSearchOcrRegions,
@@ -185,7 +185,7 @@ export async function sendPlainText(ui,{chatName,message,chatType,autoSend,idemp
   readMessages ??= pairedDirect ? readLocalLineBoundDirectMessages : readLocalLineMessages;
   const check=()=>{if(Date.now()>=deadline) fail('LINE_SEND_TIMEOUT','LINE text operation reached its deadline.');};
   const read=scope=>{check();return readMessages(scope,{runProcess:s=>runReaderProcess(s,{timeoutMs:Math.max(1,Math.min(5000,deadline-Date.now()))})});};
-  const scope=pairedDirect ? boundDirectScope({chatName,chatType,expectedChatRef,expectedOwnSenderRef},startedAt)
+  const scope=pairedDirect ? confirmedBoundDirectScope(ui,{chatName,chatType,expectedChatRef,expectedOwnSenderRef},startedAt)
     : {chatName,chatType,dateFrom:day(startedAt),dateTo:day(startedAt),messageLimit:50,mediaMode:'metadata'};
   // Resolve both kinds to avoid a detached same-title window identifying another chat.
   const before=await read({...scope,...(pairedDirect?{}:{requireUniqueName:true}),
@@ -200,7 +200,7 @@ export async function sendPlainText(ui,{chatName,message,chatType,autoSend,idemp
   const needsContext=pairedDirect && !before.chatIdentity.globalNameUnique;
   const boundScope={...scope,expectedChatRef:before.chatRef,expectedOwnSenderRef:before.ownSenderRef};
   const currentReceiptScope=olderScope=>pairedDirect
-    ? boundDirectScope({chatName,chatType,expectedChatRef:before.chatRef,expectedOwnSenderRef:before.ownSenderRef})
+    ? {...boundScope,dateFrom:[boundScope.dateFrom,day(Date.now()-2*86400000)].sort().at(-1),dateTo:day(Date.now())}
     : {...olderScope,expectedChatRef:before.chatRef,expectedOwnSenderRef:before.ownSenderRef,dateTo:day(Date.now())};
   const file=path.join(journalRoot(),`${digest(`${before.ownSenderRef}|${before.chatRef}|${idempotencyKey??message}`)}.json`);
   const old=autoSend?await readRecord(file):null;
@@ -241,7 +241,7 @@ export async function sendPlainText(ui,{chatName,message,chatType,autoSend,idemp
         if(name==='press_key' && args.key==='return') returnAttempted=true;
         return rawApi.call(name,args);
       }};
-      const context=needsContext ? await inspectBoundDirect(ui,api,boundScope,before,()=>read(boundScope),checkInput) : null;
+      const context=needsContext ? await inspectBoundDirect(ui,api,boundScope,before,()=>read(boundScope),checkInput,{consumeVisual:true}) : null;
       const inspected=context?.inspected ?? await openExactChat(ui,api,chatName,chatType,check);
       const guard=context?.guard ?? createChatGuard(chatName,inspected,ui.ocr,ui.visual);
       const options=context?.options ?? composerOptions(inspected,guard);

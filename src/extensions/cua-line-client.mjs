@@ -43,7 +43,9 @@ export async function withCuaClient(callback, { deadline } = {}) {
         if (!tools.has(name)) throw new LineToolError('LINE_UI_CAPABILITY_UNAVAILABLE', `The active CUA runtime does not advertise ${name}.`);
         inputValidator.validate(name, args);
         if (CUA_INPUT_TOOLS.has(name)) inputAttempted = true;
-        const result = await callCuaTool(client, name, args, {timeout:remaining(25000)});
+        const invocation = cuaInputInvocation(name,args,client.getServerVersion(),tools);
+        inputValidator.validate(invocation.name,invocation.args);
+        const result = await callCuaTool(client, invocation.name, invocation.args, {timeout:remaining(25000)});
         const data = unwrapCua(result);
         if (result.isError) {
           throw new LineToolError('LINE_UI_ACTION_REFUSED', `CUA ${name}: ${data.message || data.error || data.code || 'operation refused'}`, {
@@ -340,4 +342,12 @@ export function uniqueElement(state, predicate, label) {
 
 export function exactLabel(labels, roles) {
   return item => labels.includes(item.label) && (!roles || roles.some(role => String(item.role).toLowerCase().includes(role.toLowerCase())));
+}
+
+/** CUA 0.28.2's legacy right_click alias ignores exact-window delivery.
+ * Its advertised click(button:right) interface preserves that contract. */
+export function cuaInputInvocation(name,args,version,tools,platform=process.platform) {
+  if(platform!=='win32'||name!=='right_click'||version?.name!=='cua-driver'||version.version!=='0.28.2')return {name,args};
+  if(!tools.has('click'))throw new LineToolError('LINE_UI_CAPABILITY_UNAVAILABLE','This CUA build requires its exact-window click interface for right-click.');
+  return {name:'click',args:{...args,button:'right'}};
 }

@@ -60,13 +60,17 @@ class ClientCompatibilityTests(unittest.TestCase):
         self.assertEqual(str(caught.exception), 'LINE_BUILD_UNVERIFIED')
         self.assertNotIn(str(forbidden), str(caught.exception))
 
-    def test_known_manifest_is_closed_and_lists_only_the_reviewed_build(self):
+    def test_known_manifest_is_closed_and_lists_only_the_reviewed_builds(self):
         version, builds = compatibility._read_manifest(compatibility.MANIFEST_PATH)
         self.assertEqual(version, 1)
         self.assertEqual(builds, [{
             'version': '26.4.2.3957',
             'bytes': 30634432,
             'sha256': '893d899f3b39d9cef59752067166b7e72c6f7021e1841b24b617ab079cf8f2b1',
+        }, {
+            'version': '26.5.0.3975',
+            'bytes': 30628288,
+            'sha256': 'efdfc8fc3a5dd59afc9bb561897b8defac59fd212a6775d4400146ae5ccd7040',
         }])
 
     def test_verified_build_returns_only_public_compatibility_fields(self):

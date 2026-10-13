@@ -1,4 +1,4 @@
-# Windows tool contract — v3.3.5
+# Windows tool contract — v3.3.6
 
 [Overview](README.en.md) · [Installation](quickstart-windows.md) · [Upgrade to v3.3.5](MIGRATING.md#upgrading-to-v335) · [Release notes](releases/README.md)
 
@@ -54,7 +54,7 @@ Bounded key discovery uses a short-lived process-specific locator hint. The hint
 | Purpose | Tool names |
 | --- | --- |
 | Local text/image context | `get_line_local_messages` |
-| Recent recipients and readiness | `list_line_recent_chats`, `check_line_send_target`, `prepare_line_send_target` |
+| Recent recipients and readiness | `list_line_recent_chats`, `check_line_send_target`, `prepare_line_send_target`, `confirm_line_send_context` |
 | Scoped or loaded history | `get_line_chat_messages`, `search_line_chat_messages`, `verify_line_message`, `export_line_chat_history` |
 | Capabilities and plans | `get_line_capabilities`, `get_line_workflow`, `prepare_line_workflow`, `get_line_status` |
 | Chat/UI identity | `open_line_chat`, `get_line_ui_state`, `confirm_line_chat_view`, `open_line_chat_feature` |
@@ -240,3 +240,9 @@ E2E evidence for v3.0.0. Image decoding and model/GUI work add time. Smaller
 LINE process heaps after restart can be faster; machine load and scope can also
 be slower. No real message content or private runtime dumps are distributed as
 benchmark fixtures.
+
+## Visual context when OCR is incomplete
+
+`prepare_line_send_target` returns `PENDING_VISUAL_CONTEXT` and one bounded image when automatic recognition is incomplete. Read the nearest date boundary, both newest complete texts, both visible times and their directions from that image. Then call `confirm_line_send_context` with its token and those observations. The one-use token expires after 90 seconds; wrong observations or changed context refuse. Do not infer a hidden date/time or prefill observations from the reader.
+
+This confirms readiness only. User approval of the outgoing text is still required. Sending consumes the confirmed context before input and preserves paired identity, page/pixel checks, idempotency and local verification. Optional `dateFrom`, `dateTo` and `messageLimit` narrow the metadata-only preparation scope; they are preserved after confirmation. [Release details](releases/v3.3.6.en.md).

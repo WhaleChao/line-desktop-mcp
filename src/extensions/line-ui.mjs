@@ -30,7 +30,7 @@ import { readLocalLineGuiChatIdentity, readLocalLineGuiCandidateIdentity,
 import { DirectChatProof } from './line-direct-proof.mjs';
 import { GroupChatProof } from './line-group-proof.mjs';
 import { sendPlainText, openExactChat, readPlainIdentity } from './line-plain-send.mjs';
-import { prepareBoundDirect } from './line-bound-direct.mjs';
+import { prepareBoundDirect, confirmBoundDirectContext } from './line-bound-direct.mjs';
 import { searchDirectCandidate, selectDirectCandidate, hasDirectGeometrySnapshot } from './line-direct-navigation.mjs';
 import { searchDirectCandidate as searchGroupCandidate,
   selectDirectCandidate as selectGroupCandidate } from './line-group-navigation.mjs';
@@ -721,6 +721,10 @@ export class LineUi {
         { expectedChatType },
       );
     });
+  }
+
+  async confirmSendContext(args) {
+    return this.#run('ui-confirm-send-context', () => confirmBoundDirectContext(this,args));
   }
 
   async prepareSendTarget(args) {

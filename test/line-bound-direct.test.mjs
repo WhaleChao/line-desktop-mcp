@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-
 import { createLineExtensions } from '../src/extensions/line-extensions.mjs';
-import { boundDirectScope, boundDirectTail, visibleDate, matchBoundDirectRows, prepareBoundDirect } from '../src/extensions/line-bound-direct.mjs';
+import { boundDirectScope,boundDirectTail,visibleDate,matchBoundDirectRows,prepareBoundDirect,confirmBoundDirectContext,confirmedBoundDirectScope,inspectBoundDirect } from '../src/extensions/line-bound-direct.mjs';
 
 const NOW = Date.parse('2026-09-24T02:03:00Z');
 const chatName = 'Synthetic contact';
@@ -112,7 +111,7 @@ test('visible dates and message rows need matching weekday, direction, minute, a
   assert.throws(() => matchBoundDirectRows(clipped, tail, tail[0].date, bounds));
 });
 
-function detachedFixture({ pixelsChanged = false, draft = '', staleWindow = false } = {}) {
+function detachedFixture({ pixelsChanged = false, draft = '', staleWindow = false, visual = false } = {}) {
   const target = { pid: 321, window_id: 654 };
   const window = { ...target, app_name: 'LINE.exe', title: chatName,
     bounds: { x: 1100, y: 150, width: 740, height: 1050 }, is_on_screen: true, minimized: false };
@@ -154,11 +153,12 @@ function detachedFixture({ pixelsChanged = false, draft = '', staleWindow = fals
   } };
   const ui = { withClient: callback => callback(api),
     visual: { imageDimensions: () => ({ width: 740, height: 1050 }),
-      fingerprintRegion: async (image, region) => ({ region, sha256: image.data === 'same' ? 'a'.repeat(64) : 'b'.repeat(64) }) },
+      fingerprintRegion: async (image, region) => ({ region, sha256: image.data === 'same' ? 'a'.repeat(64) : 'b'.repeat(64), image }),
+      locateDateCapsule: async () => true },
     ocr: { recognizeImage: async () => ({ coordinateSpace: 'input-png-pixels', scaleFactor: 1,
-      width: 740, height: 1050, lines }) },
+      width: 740, height: 1050, lines:visual?[]:lines }) },
   };
-  return { ui, calls, get snapshots() { return snapshots; } };
+  return { ui, api, elements, window, calls, get snapshots() { return snapshots; } };
 }
 
 test('synthetic detached prepare uses two screenshot observations and leaves input untouched', async t => {
@@ -191,4 +191,95 @@ test('synthetic detached prepare refuses changed pixels, window geometry, and a 
       { now: () => NOW, readMessages: async () => local() }), error => error.code === code);
     assert.ok(fake.calls.every(call => ['list_windows', 'get_window_state'].includes(call.name)));
   }
+});
+
+const observation = token => ({...args,token,observedDate:'今天',observedMessages:[
+  {text:'First synthetic text',time:'上午10:01',direction:'incoming'},
+  {text:'Second synthetic text',time:'10:02',direction:'outgoing'}]});
+test('visual confirmation returns only crop and opaque token, preserves bounded scope and consumes at input boundary',async t=>{
+  t.mock.method(Date,'now',()=>NOW);
+  const fake=detachedFixture({visual:true}), scopes=[];
+  const readMessages=async scope=>{scopes.push(scope);return local();};
+  const bounded={...args,dateFrom:'2026-09-23',dateTo:'2026-09-24',messageLimit:8};
+  const pending=await prepareBoundDirect(fake.ui,bounded,{now:()=>NOW,readMessages});
+  assert.equal(pending.status,'PENDING_VISUAL_CONTEXT');assert.equal(pending.images.length,1);
+  assert.ok(!JSON.stringify(pending).includes('First synthetic text'));
+  assert.ok(!JSON.stringify(pending).includes('Second synthetic text'));
+  const ready=await confirmBoundDirectContext(fake.ui,observation(pending.token),{now:()=>NOW,readMessages});
+  assert.equal(ready.status,'READY');assert.equal(ready.evidence.proofKind,'bound-direct-caller-visual-context');
+  await assert.rejects(confirmBoundDirectContext(fake.ui,observation(pending.token),{now:()=>NOW,readMessages}),e=>e.code==='LINE_VISUAL_CONTEXT_TOKEN_INVALID');
+  const scope=confirmedBoundDirectScope(fake.ui,args,NOW);assert.equal(scope.messageLimit,8);assert.equal(scope.dateFrom,'2026-09-23');
+  const proof=await inspectBoundDirect(fake.ui,fake.api,scope,local(),()=>readMessages(scope),()=>{},{now:()=>NOW});
+  assert.equal(proof.evidence.proofKind,'bound-direct-caller-visual-context');
+  await inspectBoundDirect(fake.ui,fake.api,scope,local(),()=>readMessages(scope),()=>{},{consumeVisual:true,now:()=>NOW});
+  assert.equal(confirmedBoundDirectScope(fake.ui,args,NOW).messageLimit,30);
+  assert.ok(scopes.every(scope=>scope.messageLimit===8));
+  assert.ok(fake.calls.every(call=>['list_windows','get_window_state'].includes(call.name)));
+});
+test('visual observations reject text, time, direction, date and paired reference mismatches and consume failed tokens',async t=>{
+  t.mock.method(Date,'now',()=>NOW);
+  for(const change of [a=>{a.observedMessages[0].text='invented';},a=>{a.observedMessages[0].time='10:09';},
+    a=>{a.observedMessages[0].direction='outgoing';},a=>{a.observedDate='昨天';},
+    a=>{a.expectedChatRef='chat:'+ 'f'.repeat(24);},a=>{a.expectedOwnSenderRef='sender:'+ 'f'.repeat(24);},
+    a=>{a.chatName='Other';},a=>{a.observedMessages.pop();}]) {
+    const fake=detachedFixture({visual:true}), deps={now:()=>NOW,readMessages:async()=>local()};
+    const pending=await prepareBoundDirect(fake.ui,args,deps), observed=observation(pending.token);change(observed);
+    await assert.rejects(confirmBoundDirectContext(fake.ui,observed,deps),e=>e.code==='LINE_VISUAL_CONTEXT_MISMATCH');
+    await assert.rejects(confirmBoundDirectContext(fake.ui,observation(pending.token),deps),e=>e.code==='LINE_VISUAL_CONTEXT_TOKEN_INVALID');
+  }
+});
+test('visual confirmation rejects expiry, page drift, changed context pixels, moved window and nonempty drafts',async t=>{
+  t.mock.method(Date,'now',()=>NOW);
+  for(const kind of ['expiry','page','pixels','window','draft']) {
+    const fake=detachedFixture({visual:true});let now=NOW, drift=false;
+    const readMessages=async()=>{const value=local();value.freshness.snapshotCapturedAt=new Date(now).toISOString();
+      if(drift)value.messages.unshift(message('Earlier changed message','00',peerSenderRef,'e'));return value;};
+    const deps={now:()=>now,readMessages}, pending=await prepareBoundDirect(fake.ui,args,deps);
+    if(kind==='expiry')now+=90000;
+    if(kind==='page')drift=true;
+    if(kind==='pixels')fake.ui.visual.fingerprintRegion=async(image,region)=>({region,sha256:'f'.repeat(64),image});
+    if(kind==='window')fake.window.bounds.x++;
+    if(kind==='draft')fake.elements.find(e=>e.role==='Edit').value='existing draft';
+    // The fixture window is an object shared with the captured reference; replace the API response for a moved window.
+    if(kind==='window'){fake.window.bounds.x--;const original=fake.api.call;
+      fake.api.call=async(name,options)=>name==='list_windows'?{windows:[{...fake.window,bounds:{...fake.window.bounds,x:1101}}]}:original(name,options);}
+    await assert.rejects(confirmBoundDirectContext(fake.ui,observation(pending.token),deps),e=>e.code===
+      ({expiry:'LINE_VISUAL_CONTEXT_EXPIRED',page:'LINE_BOUND_CONTEXT_CHANGED',pixels:'LINE_BOUND_CONTEXT_CHANGED',window:'LINE_CHAT_STALE',draft:'LINE_DRAFT_CONFLICT'})[kind]);
+  }
+});
+test('normal OCR also rejects changes elsewhere in the scoped page',async t=>{
+ t.mock.method(Date,'now',()=>NOW);const fake=detachedFixture();let reads=0;
+ await assert.rejects(prepareBoundDirect(fake.ui,args,{now:()=>NOW,readMessages:async()=>{const value=local();
+   if(++reads>1)value.messages.unshift(message('Earlier changed message','00',peerSenderRef,'e'));return value;}}),e=>e.code==='LINE_BOUND_CONTEXT_CHANGED');
+});
+test('explicit scopes are paired, limited to recent Taipei dates and integer bounded page size',()=>{
+ assert.equal(boundDirectScope({...args,dateFrom:'2026-09-23',dateTo:'2026-09-24',messageLimit:8},NOW).messageLimit,8);
+ for(const extra of [{dateFrom:'2026-09-23'},{dateFrom:'2026-09-20',dateTo:'2026-09-24'},
+ {dateFrom:'2026-09-24',dateTo:'2026-09-25'},{dateFrom:'2026-09-24',dateTo:'2026-09-23'},
+ {messageLimit:0},{messageLimit:31},{messageLimit:1.5}])assert.throws(()=>boundDirectScope({...args,...extra},NOW),e=>e.code==='LINE_INVALID_ARGUMENT');
+});
+
+test('pending capacity is four per UI and a staged composer does not invalidate an accepted context guard',async t=>{
+ t.mock.method(Date,'now',()=>NOW);const fake=detachedFixture({visual:true}),deps={now:()=>NOW,readMessages:async()=>local()},tokens=[];
+ for(let i=0;i<5;i++)tokens.push((await prepareBoundDirect(fake.ui,args,deps)).token);
+ assert.equal(new Set(tokens).size,5);
+ await assert.rejects(confirmBoundDirectContext(fake.ui,observation(tokens[0]),deps),e=>e.code==='LINE_VISUAL_CONTEXT_TOKEN_INVALID');
+ await confirmBoundDirectContext(fake.ui,observation(tokens[4]),deps);
+ const scope=confirmedBoundDirectScope(fake.ui,args,NOW);
+ const proof=await inspectBoundDirect(fake.ui,fake.api,scope,local(),async()=>local(),()=>{},{consumeVisual:true,now:()=>NOW});
+ fake.elements.find(e=>e.role==='Edit').value='new staged message';
+ await proof.guard.verify();
+});
+
+test('fresh reader timing metadata may change while the complete stable page remains identical',async t=>{
+ t.mock.method(Date,'now',()=>NOW);const fake=detachedFixture({visual:true});let reads=0;
+ const readMessages=async()=>{const value=local(),n=++reads;
+   value.queryCompletedAt=new Date(NOW+n).toISOString();value.requestStartedAt=new Date(NOW+n-1).toISOString();
+   value.freshness.snapshotCapturedAt=new Date(NOW+n).toISOString();value.freshness.readerTiming={duration:n};
+   value.scope.snapshotCaptureTimes=[n];value.readerTiming={duration:n};return value;};
+ const deps={now:()=>NOW,readMessages},pending=await prepareBoundDirect(fake.ui,args,deps);
+ assert.equal((await confirmBoundDirectContext(fake.ui,observation(pending.token),deps)).status,'READY');
+ const scope=confirmedBoundDirectScope(fake.ui,args,NOW);
+ await inspectBoundDirect(fake.ui,fake.api,scope,await readMessages(),readMessages,()=>{},{now:()=>NOW});
+ assert.ok(reads>=4);
 });

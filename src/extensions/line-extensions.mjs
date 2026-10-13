@@ -87,11 +87,19 @@ export const LINE_TOOL_DESCRIPTORS = [
     expectedChatRef: { type: 'string', pattern: '^chat:[0-9a-f]{24}$' },
     expectedOwnSenderRef: { type: 'string', pattern: '^sender:[0-9a-f]{24}$' },
   }, ['chatName', 'chatType'], readOnly, {allOf:[{if:{required:['expectedOwnSenderRef']},then:{required:['expectedChatRef'],properties:{chatType:{const:'direct'}}}}]}),
-  descriptor('prepare_line_send_target', 'Inspect an already-open exact titled direct chat using paired opaque chat/account refs, two latest local text records from the current and previous two Taipei dates, independent visible date/minute/direction/text evidence, and an empty composer. At most 30 metadata-only records. Unopened same-name contacts are allowed only when the existing chat identity is unique. Returns READY or an error without input, staging or sending. This is a current readiness observation, never send approval or a reusable proof; send_message_auto repeats its checks.', {
+  descriptor('prepare_line_send_target', 'Inspect an already-open direct chat with paired chat/account refs and an empty composer. Read at most 30 metadata-only records within the current and previous two Taipei dates; optional dateFrom/dateTo/messageLimit narrow that scope. Full OCR returns READY. If OCR is incomplete, PENDING_VISUAL_CONTEXT returns one short-lived token and a context crop: personally read its nearest date boundary and both newest complete messages, clocks and directions before confirm_line_send_context. No input or send; READY never grants send permission.', {
     chatName:chat,chatType:{type:'string',const:'direct'},
     expectedChatRef:{type:'string',pattern:'^chat:[0-9a-f]{24}$'},
     expectedOwnSenderRef:{type:'string',pattern:'^sender:[0-9a-f]{24}$'},
+    dateFrom:isoDate,dateTo:isoDate,messageLimit:{type:'integer',minimum:2,maximum:30},
   }, ['chatName','chatType','expectedChatRef','expectedOwnSenderRef']),
+  descriptor('confirm_line_send_context', 'After personally inspecting the context image from prepare_line_send_target, supply the displayed date and BOTH complete newest texts, each visible time and direction. Never copy expected local records as observations or infer a hidden date/time. Consume the returned token once; fresh account/chat refs, full local page, window bounds, context pixels and empty composer must still match. READY is a visual readiness confirmation only; send_message_auto consumes this short-lived context before input and preserves send approval/idempotency checks.', {
+    chatName:chat,chatType:{type:'string',const:'direct'},
+    expectedChatRef:{type:'string',pattern:'^chat:[0-9a-f]{24}$'},
+    expectedOwnSenderRef:{type:'string',pattern:'^sender:[0-9a-f]{24}$'},
+    token:sourceToken,observedDate:{type:'string',minLength:1,maxLength:80},
+    observedMessages:{type:'array',minItems:2,maxItems:2,items:{type:'object',additionalProperties:false,properties:{text,time:{type:'string',minLength:1,maxLength:20},direction:{type:'string',enum:['incoming','outgoing']}},required:['text','time','direction']}},
+  }, ['chatName','chatType','expectedChatRef','expectedOwnSenderRef','token','observedDate','observedMessages'], uiOnly),
   descriptor('list_line_recent_chats', 'List direct and group chat names active in the last 14 or 30 Taipei calendar days from local encrypted snapshot metadata. Returns opaque chat refs and last activity times only, without message text, media, or GUI actions. Same-name chats remain separate. A listed chat is not send-target proof; check exact identity again before any action.', {
     days: { type: 'integer', enum: [14, 30] },
     query: { type: 'string', minLength: 1, maxLength: 100, description: 'Case-insensitive literal substring of effective chat name.' },
@@ -349,6 +357,7 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
 
   const handlers = {
     check_line_send_target: args => checkLineSendTarget(args, { readIdentity: localIdentityReader, readBoundIdentity:boundIdentityReader, now }),
+    confirm_line_send_context: async args => ui.confirmSendContext(args),
     prepare_line_send_target: async args => {
       try { return await ui.prepareSendTarget(args); }
       catch(error) { throw new LineToolError(error?.code || 'LINE_PREPARE_FAILED',

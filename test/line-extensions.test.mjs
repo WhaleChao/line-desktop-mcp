@@ -62,7 +62,7 @@ function fixture(raw = history, options = {}) {
 test('tool catalogue is unique, closed-schema and exposes six compatible legacy names', () => {
   const names = LINE_TOOL_DESCRIPTORS.map(item => item.name);
   assert.equal(names.length, new Set(names).size);
-  assert.equal(names.length, 38);
+  assert.equal(names.length, 39);
   for (const name of ['get_line_chatroom_history_short', 'get_line_chatroom_history_default', 'get_line_chatroom_history_long', 'send_message_manual', 'send_message_auto', 'send_file_manual']) assert.ok(names.includes(name));
   for (const item of LINE_TOOL_DESCRIPTORS) assert.equal(item.inputSchema.additionalProperties, false);
 });
@@ -641,4 +641,14 @@ test('failed UI comparison preserves usable local data without retry; failed loc
   const failedLocal = fixture(history, { localReader: async () => { throw new Error('Local fixture unavailable'); } });
   assert.equal((await failedLocal.extension.call('get_line_local_messages', args)).isError, true);
   assert.deepEqual(failedLocal.calls, []);
+});
+
+
+test('visual context confirmation validates both caller observations before invoking its read-only handler',async()=>{
+  let calls=0;const args={chatName:'Fixture Chat',chatType:'direct',expectedChatRef:'chat:'+'a'.repeat(24),expectedOwnSenderRef:'sender:'+'b'.repeat(24),token:'opaque',observedDate:'昨天',observedMessages:[{text:'incoming fixture',time:'14:29',direction:'incoming'},{text:'outgoing fixture',time:'14:29',direction:'outgoing'}]};
+  const extension=createLineExtensions({}, {ui:{confirmSendContext:async observed=>{calls++;assert.deepEqual(observed,args);return {status:'READY',staged:false,sendDispatched:false};}}});
+  const descriptor=extension.tools.find(item=>item.name==='confirm_line_send_context');
+  assert.equal(descriptor.inputSchema.properties.observedMessages.minItems,2);assert.equal(descriptor.inputSchema.properties.observedMessages.maxItems,2);
+  const invalid=await extension.call('confirm_line_send_context',{...args,observedMessages:args.observedMessages.slice(0,1)});assert.equal(invalid.isError,true);assert.equal(calls,0);
+  assert.equal(body(await extension.call('confirm_line_send_context',args)).status,'READY');assert.equal(calls,1);
 });

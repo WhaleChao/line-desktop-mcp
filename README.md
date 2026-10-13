@@ -8,7 +8,9 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[v3.3.5 五語更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[v3.3.6 更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+
+**v3.3.6 — LINE 26.5 與畫面核對修正：** 小字漏讀時提供短效畫面確認，核對兩則完整原文、日期與各自時間；正式送出仍保留身分、授權、防重送與本機覆核。[更新說明](docs/releases/v3.3.6.zh-TW.md)
 
 **v3.3.5 — 混合搜尋 OCR 修正：** 分類各自裁切、補足標題範圍與 OCR 白邊，避免唯一聊天室因分類標頭漏讀被拒絕；完整名稱與身分核對不變。[更新說明](docs/releases/v3.3.5.zh-TW.md)
 
