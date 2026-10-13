@@ -119,18 +119,21 @@ test('a truncated 30-record receipt page must overlap the pre-send tail',()=>{
 test('a chat switch after draft input refuses Return and records a staged draft',async()=>{
   const env=environment({switchAtSnapshot:4});
   await assert.rejects(sendPlainText(env.ui,args,env.dependencies),error=>
-    error.details.status==='DRAFTED' && error.details.sendDispatched===false
-      && error.details.draftMayBeStaged===true);
+    error.code==='LINE_UI_POSTCONDITION_UNAVAILABLE' && error.details.status==='DRAFTED'
+      && error.details.sendDispatched===false && error.details.draftMayBeStaged===true
+      && error.details.previousCode==='LINE_CHAT_STALE');
   assert.equal(env.stats().presses,0);
   assert.equal(env.stats().writes,1);
 });
 
 test('a pre-Return input refusal preserves staged-draft uncertainty without dispatch',async()=>{
   const env=environment({setError:Object.assign(new Error('synthetic schema refusal'),
-    {code:'LINE_UI_INVALID_ARGUMENT',operationMayHaveCompleted:false})});
+    {code:'LINE_UI_INVALID_ARGUMENT',operationMayHaveCompleted:false,
+      details:{previousCode:'private synthetic backend detail'}})});
   await assert.rejects(sendPlainText(env.ui,args,env.dependencies),error=>
     error.code==='LINE_UI_INVALID_ARGUMENT' && error.details.status==='DRAFTED'
-      && error.details.sendDispatched===false && error.details.draftMayBeStaged===true);
+      && error.details.sendDispatched===false && error.details.draftMayBeStaged===true
+      && error.details.previousCode===undefined);
   assert.equal(env.stats().presses,0);
   assert.equal(env.stats().writes,1);
 });

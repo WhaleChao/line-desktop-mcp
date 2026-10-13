@@ -296,7 +296,9 @@ export async function sendPlainText(ui,{chatName,message,chatType,autoSend,idemp
     if(autoSend)try { await writeRecord(file,record); } catch { journalPersisted=false; }
     throw new LineToolError(error.code??(returnAttempted?'LINE_SEND_UNCERTAIN':'LINE_SEND_FAILED'),error.message,{status:record.status,
       operationId:record.operationId,sendDispatched:returnAttempted?null:false,draftMayBeStaged:draftAttempted,journalPersisted,
-      operationMayHaveCompleted:returnAttempted,elapsedMs:Date.now()-startedAt});
+      operationMayHaveCompleted:returnAttempted,elapsedMs:Date.now()-startedAt,
+      ...(/^(?:LINE|CHAT)_[A-Z0-9_]+$/u.test(error.details?.previousCode ?? '')
+        ? {previousCode:error.details.previousCode} : {})});
   }
 }
 

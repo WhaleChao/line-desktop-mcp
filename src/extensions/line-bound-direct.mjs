@@ -181,7 +181,8 @@ export async function inspectBoundDirect(ui, api, scope, before, readCurrent, ch
     height:matched.rows[1].frame.y+matched.rows[1].frame.height-dateRow.frame.y};
   const regions=[context,dateRow.frame,...matched.rows.map(row=>row.frame)];
   const fingerprints=await Promise.all(regions.map(region=>ui.visual.fingerprintRegion(view.image,region)));
-  const record={scope,inspected,titleGuard,view,regions,fingerprints,pageDigest:pageDigest(before)};
+  const record={scope,inspected,titleGuard,view,regions,fingerprints,pageDigest:pageDigest(before),
+    layoutFrames:contextLayoutFrames(inspected.state,[dateRow,...matched.rows])};
   const guard=contextGuard(ui,api,record,readCurrent,check);
   return {inspected,guard,titleGuard,options:composerOptions(inspected,guard),
     evidence:{proofKind:'bound-direct-recent-context',matchedMessageCount:tail.length,dateVerified:true,minuteSources:matched.minuteSources}};
@@ -254,6 +255,39 @@ export function confirmedBoundDirectScope(ui,args,now=Date.now()) {
 }
 const visualEvidence=()=>({proofKind:'bound-direct-caller-visual-context',matchedMessageCount:2,
   dateVerified:true,minuteSources:['caller-observed','caller-observed']});
+// Relocation is grounded in the original complete date and newest two rows,
+// never in a search for matching pixels elsewhere in the screenshot.
+function contextLayoutFrames(state,rows) {
+  const parent=rows[0].item.parent_index;
+  if(rows.some(row=>row.item.parent_index!==parent)
+    || !state.elements.some(item=>item.element_index===parent && item.role==='List'))return undefined;
+  return rows.map(row=>({...row.frame}));
+}
+function relocatedContextRegions(record,state,fresh) {
+  const {view,regions,layoutFrames}=record, before=view.messageBounds, after=fresh.messageBounds;
+  const headers=state=>state.elements.filter(item=>item.role==='Header')
+    .map(item=>({frame:item.frame,label:item.label,name:item.name,text:item.text,value:item.value}));
+  if(!layoutFrames || ['x','y','width'].some(key=>before[key]!==after[key])
+    || hash(headers(state))!==hash(headers(record.inspected.state)))fail('LINE_BOUND_CONTEXT_CHANGED');
+  const rows=state.elements.filter(item=>item.role==='ListItem')
+    .map(item=>({item,frame:rowFrame(item,fresh)})).sort((a,b)=>(a.frame?.y??Infinity)-(b.frame?.y??Infinity));
+  const selected=rows.slice(-2), original=layoutFrames.slice(1);
+  if(selected.length!==2)fail('LINE_BOUND_CONTEXT_CHANGED');
+  const delta=selected[1].frame?.y-original[1].y;
+  const translated=frame=>({...frame,y:frame.y+delta});
+  const sameFrame=(a,b)=>a && ['x','y','width','height'].every(key=>a[key]===b[key]);
+  const complete=frame=>inside(frame,after) && frame.x+frame.width<=after.x+after.width
+    && frame.y+frame.height<=after.y+after.height;
+  const parent=selected[0].item.parent_index;
+  const date=rows.filter(row=>row.item.parent_index===parent && sameFrame(row.frame,translated(layoutFrames[0])));
+  if(!Number.isFinite(delta) || selected[1].item.parent_index!==parent || date.length!==1
+    || !state.elements.some(item=>item.element_index===parent && item.role==='List')
+    || selected.some((row,index)=>!sameFrame(row.frame,translated(original[index])))
+    || [date[0],...selected].some(row=>!complete(row.frame)))fail('LINE_BOUND_CONTEXT_CHANGED');
+  const relocated=regions.map(translated);
+  if(relocated.some(region=>!complete(region)))fail('LINE_BOUND_CONTEXT_CHANGED');
+  return relocated;
+}
 function contextGuard(ui,api,record,readCurrent,check=()=>{},now=Date.now) {
   const {scope,inspected,titleGuard,view,regions,fingerprints}=record;
   return {kind:'bound-direct-context',chatName:scope.chatName,target:inspected.target,
@@ -273,8 +307,10 @@ function contextGuard(ui,api,record,readCurrent,check=()=>{},now=Date.now) {
       if(stateTitle!==undefined && stateTitle!==scope.chatName)fail('LINE_CHAT_STALE');
       const fresh=replySourceVisualView(state,inspected.window,titleGuard,ui.visual);
       if(!fresh || fresh.dimensions.width!==view.dimensions.width || fresh.dimensions.height!==view.dimensions.height
-        || hash(fresh.messageBounds)!==hash(view.messageBounds) || hash(fresh.rootFrame)!==hash(view.rootFrame))fail('LINE_BOUND_CONTEXT_CHANGED');
-      const next=await Promise.all(regions.map(region=>ui.visual.fingerprintRegion(fresh.image,region)));
+        || hash(fresh.rootFrame)!==hash(view.rootFrame))fail('LINE_BOUND_CONTEXT_CHANGED');
+      const currentRegions=hash(fresh.messageBounds)===hash(view.messageBounds) ? regions
+        : relocatedContextRegions(record,state,fresh);
+      const next=await Promise.all(currentRegions.map(region=>ui.visual.fingerprintRegion(fresh.image,region)));
       if(next.some((item,index)=>item.sha256!==fingerprints[index].sha256))fail('LINE_BOUND_CONTEXT_CHANGED');
       check();
       if(record.capturedAt!==undefined && now()-record.capturedAt>=VISUAL_TTL)fail('LINE_VISUAL_CONTEXT_EXPIRED');
@@ -319,7 +355,7 @@ async function pendingVisualContext(ui,api,scope,before,now,check=()=>{}) {
   const capturedAt=now(), token=randomBytes(24).toString('hex');
   const record={scope,inspected,titleGuard,view,regions,fingerprints,pageDigest:pageDigest(before),tail,
     observedTexts:before.messages.slice(-2).map(message=>message.text.replace(/\r\n/gu,'\n').normalize('NFC')),
-    capturedAt};
+    capturedAt,layoutFrames:contextLayoutFrames(inspected.state,[dateRow,...selected])};
   const store=visualStore(ui); trimRecords(store.pending,capturedAt);
   store.pending.set(token,record);
   return {success:true,status:'PENDING_VISUAL_CONTEXT',token,expiresAt:new Date(capturedAt+VISUAL_TTL).toISOString(),

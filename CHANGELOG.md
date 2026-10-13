@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.3.7 — 2026-10-13 (Asia/Taipei)
+
+- Preserve direct-chat context verification when a growing multiline composer moves the unchanged date and two newest message rows vertically. All original context/date/message pixel hashes must still match, every row must remain fully visible, and window, paired identity, scoped page and expiry checks remain unchanged.
+- Preserve a sanitized inner postcondition error code so an unreadable snapshot can be distinguished from a changed chat or context. A possibly staged draft still refuses Return and never replays automatically.
+
+Validation uses synthetic multiline draft and refusal fixtures, without any additional LINE input or send. [Release notes](docs/releases/v3.3.7.en.md).
+
 ## 3.3.6 — 2026-10-13 (Asia/Taipei)
 
 - Recognize the exact LINE Desktop 26.5.0.3975 build while retaining executable hash, size and process checks.

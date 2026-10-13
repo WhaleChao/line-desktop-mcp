@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { writeDraft } from '../src/extensions/line-ui.mjs';
 import { createLineExtensions } from '../src/extensions/line-extensions.mjs';
 import { boundDirectScope,boundDirectTail,visibleDate,matchBoundDirectRows,prepareBoundDirect,confirmBoundDirectContext,confirmedBoundDirectScope,inspectBoundDirect } from '../src/extensions/line-bound-direct.mjs';
 
@@ -282,4 +284,100 @@ test('fresh reader timing metadata may change while the complete stable page rem
  const scope=confirmedBoundDirectScope(fake.ui,args,NOW);
  await inspectBoundDirect(fake.ui,fake.api,scope,await readMessages(),readMessages,()=>{},{now:()=>NOW});
  assert.ok(reads>=4);
+});
+
+// Model a composer growing after exactly one set_value, with screenshot hashes
+// tied to crop geometry so the old, untranslated crops cannot pass.
+function reflowFixture({visual=false,change=()=>{}}={}) {
+  const fake=detachedFixture({visual}), originalCall=fake.api.call;
+  let shifted=false;
+  const crops=[];
+  fake.ui.visual.fingerprintRegion=async(image,region)=>{
+    crops.push({...region});
+    const original={...region,y:region.y+(shifted?120:0)};
+    const sha256=createHash('sha256').update(JSON.stringify(original)+(image.data==='changed'?'changed':'')).digest('hex');
+    return {region,sha256,image};
+  };
+  fake.api.call=async(name,options)=>{
+    if(name==='set_value') {
+      fake.calls.push({name,options});
+      assert.equal(shifted,false,'Only one composer write is allowed');
+      shifted=true;
+      for(const item of fake.elements) {
+        if([24,31,32,33].includes(item.element_index)){item.frame.y-=120;item.frame.h+=120;}
+        if([34,35,37].includes(item.element_index))item.frame.h-=120;
+        if(item.role==='ListItem')item.frame.y-=120;
+      }
+      fake.elements.find(item=>item.role==='Edit').value=options.value;
+      change(fake);
+      return {success:true};
+    }
+    const result=await originalCall(name,options);
+    if(name==='get_window_state')return {...result,elements:structuredClone(fake.elements)};
+    return result;
+  };
+  return {...fake,crops};
+}
+async function reflowProof(fake,visual) {
+  const deps={now:()=>NOW,readMessages:async()=>local()};
+  if(visual){
+    const pending=await prepareBoundDirect(fake.ui,args,deps);
+    await confirmBoundDirectContext(fake.ui,observation(pending.token),deps);
+  }
+  return inspectBoundDirect(fake.ui,fake.api,boundDirectScope(args,NOW),local(),async()=>local(),()=>{},{now:()=>NOW});
+}
+const longDraft='Synthetic long composer draft.\n'.repeat(40);
+test('full writeDraft accepts identical complete context after long composer vertical reflow for both proofs',async t=>{
+  t.mock.method(Date,'now',()=>NOW);
+  for(const visual of [false,true]) {
+    const fake=reflowFixture({visual}),proof=await reflowProof(fake,visual);
+    const result=await writeDraft(fake.api,proof.inspected.target,longDraft,'',proof.options);
+    assert.equal(result.changed,true);
+    assert.equal(fake.elements.find(item=>item.role==='Edit').value,longDraft);
+    const writes=fake.calls.filter(call=>!['list_windows','get_window_state'].includes(call.name));
+    assert.deepEqual(writes.map(call=>call.name),['set_value']);
+    assert.equal(writes[0].options.value,longDraft);
+    assert.deepEqual(fake.crops.slice(-4).map(region=>region.y),[430,430,489,613]);
+    // The same accepted context remains required after the write.
+    await proof.guard.verify();
+  }
+});
+test('full writeDraft refuses clipped, resized, unequal or changed context after reflow',async t=>{
+  t.mock.method(Date,'now',()=>NOW);
+  const row=(fake,index)=>fake.elements.find(item=>item.element_index===index);
+  const cases=[
+    ['clipped date with common shift',fake=>{for(const item of fake.elements)if(item.role==='ListItem')item.frame.y-=450;}],
+    ['clipped newest row',fake=>{row(fake,44).frame.h+=140;}],
+    ['one pixel clipped newest row',fake=>{row(fake,32).frame.y=959;}],
+    ['unequal shift',fake=>{row(fake,43).frame.y++;}],
+    ['horizontal shift',fake=>{row(fake,44).frame.x++;}],
+    ['resized row',fake=>{row(fake,43).frame.w--;}],
+    ['different parent',fake=>{row(fake,43).parent_index=35;}],
+    ['missing date',fake=>{fake.elements.splice(fake.elements.indexOf(row(fake,40)),1);}],
+    ['newest row replaced',fake=>{fake.elements.push({...row(fake,44),element_index:45,frame:{...row(fake,44).frame,y:980}});}],
+    ['changed pixels',fake=>{const call=fake.api.call;fake.api.call=async(name,options)=>{const result=await call(name,options);
+      return name==='get_window_state'?{...result,images:[{type:'image',mimeType:'image/png',data:'changed'}]}:result;};}],
+    ['body top changed',fake=>{row(fake,22).frame.y++;}],
+    ['header changed',fake=>{row(fake,14).label='Other synthetic header';}],
+    ['root changed',fake=>{row(fake,0).frame.x++;}],
+  ];
+  for(const height of [378,40,124,195])cases.push([`changed crop height ${height}`,fake=>{
+    const fingerprint=fake.ui.visual.fingerprintRegion;
+    fake.ui.visual.fingerprintRegion=async(image,region)=>{const result=await fingerprint(image,region);
+      return region.height===height?{...result,sha256:'f'.repeat(64)}:result;};
+  }]);
+  for(const visual of [false,true])for(const [label,change] of cases) {
+    const fake=reflowFixture({visual,change}),proof=await reflowProof(fake,visual);
+    await assert.rejects(writeDraft(fake.api,proof.inspected.target,longDraft,'',proof.options),
+      error=>error.code==='LINE_UI_POSTCONDITION_UNAVAILABLE' && error.details?.previousCode==='LINE_BOUND_CONTEXT_CHANGED',label);
+    assert.deepEqual(fake.calls.filter(call=>!['list_windows','get_window_state'].includes(call.name)).map(call=>call.name),['set_value']);
+  }
+});
+test('long reflow still rejects a truncated draft readback after one write',async t=>{
+  t.mock.method(Date,'now',()=>NOW);
+  const fake=reflowFixture({change:fake=>{fake.elements.find(item=>item.role==='Edit').value=longDraft.slice(0,40);}});
+  const proof=await reflowProof(fake,false);
+  await assert.rejects(writeDraft(fake.api,proof.inspected.target,longDraft,'',proof.options),error=>error.code==='LINE_DRAFT_WRITE_UNVERIFIED');
+  assert.equal(fake.calls.filter(call=>call.name==='set_value').length,1);
+  assert.ok(!fake.calls.some(call=>call.name==='press_key'));
 });

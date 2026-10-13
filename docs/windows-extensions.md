@@ -1,4 +1,4 @@
-# Windows tool contract — v3.3.6
+# Windows tool contract — v3.3.7
 
 [Overview](README.en.md) · [Installation](quickstart-windows.md) · [Upgrade to v3.3.5](MIGRATING.md#upgrading-to-v335) · [Release notes](releases/README.md)
 
@@ -246,3 +246,5 @@ benchmark fixtures.
 `prepare_line_send_target` returns `PENDING_VISUAL_CONTEXT` and one bounded image when automatic recognition is incomplete. Read the nearest date boundary, both newest complete texts, both visible times and their directions from that image. Then call `confirm_line_send_context` with its token and those observations. The one-use token expires after 90 seconds; wrong observations or changed context refuse. Do not infer a hidden date/time or prefill observations from the reader.
 
 This confirms readiness only. User approval of the outgoing text is still required. Sending consumes the confirmed context before input and preserves paired identity, page/pixel checks, idempotency and local verification. Optional `dateFrom`, `dateTo` and `messageLimit` narrow the metadata-only preparation scope; they are preserved after confirmation. [Release details](releases/v3.3.6.en.md).
+
+A multiline draft may move the same date and two newest message rows vertically as the composer grows. Verification permits one common vertical translation only while all original rows remain fully visible with unchanged sizes and relative positions, and every original context/date/message fingerprint matches. Clipping, changed content or identity still refuses. A postcondition refusal can expose a sanitized `previousCode`; a staged draft is not permission to replay input or Return. [Reflow details](releases/v3.3.7.en.md).
