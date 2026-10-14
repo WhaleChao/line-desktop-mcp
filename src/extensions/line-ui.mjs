@@ -25,6 +25,7 @@ import {
   selectAccessibleReplyBubble,
 } from './line-quote-binding.mjs';
 import { withLineOperation } from '../automation/line-operation-lock.mjs';
+import { withLineUiMetrics } from './line-ui-metrics.mjs';
 import { readLocalLineGuiChatIdentity, readLocalLineGuiCandidateIdentity,
   readLocalLineGuiGroupCandidateIdentity, readLocalLineMessages } from './line-local-reader.mjs';
 import { DirectChatProof } from './line-direct-proof.mjs';
@@ -301,16 +302,21 @@ export class LineUi {
     }));
   }
 
-  async openChat({ chatName } = {}) {
+  async openChat({ chatName, chatType, expectedChatRef, expectedOwnSenderRef } = {}) {
     requireChat(chatName);
     return this.#run('ui-open-chat', async () => {
       const deadline = Date.now() + 30000;
       const check = () => { if (Date.now() >= deadline) throw new LineToolError('LINE_OPEN_TIMEOUT', 'Opening the named chat timed out.'); };
-      const identity = await this.readNamedIdentity({ chatName });
+      const identity = await this.readNamedIdentity({ chatName,
+        ...(chatType===undefined?{}:{chatType}),
+        ...(expectedChatRef===undefined?{}:{expectedChatRef}),
+        ...(expectedOwnSenderRef===undefined?{}:{expectedOwnSenderRef}) });
       return this.withClient(async rawApi => {
         const api = { ...rawApi, call(name, args) { check(); return rawApi.call(name, args); } };
         const inspected = await openExactChat(this, api, chatName, identity.kind, check);
-        return { ...chatResult(chatName, inspected), chatType: identity.kind, chatRef: identity.chatRef };
+        return { ...chatResult(chatName, inspected), chatType: identity.kind, chatRef: identity.chatRef,
+          ...(identity.ownSenderRef===undefined?{}:{ownSenderRef:identity.ownSenderRef,
+            uiIdentityVerified:false,requiresSendContext:identity.requiresSendContext}) };
       }, { deadline });
     });
   }
@@ -501,7 +507,14 @@ export class LineUi {
 
       let current;
       try {
-        current = await inspectExactMainWindow(api, pending.target);
+        if (pending.guard.kind === 'detached-title') {
+          current = await inspectDetachedChat(api, chatName);
+          if (!current || !sameTarget(current.target, pending.target)) {
+            throw new LineToolError('LINE_REPLY_SOURCE_STALE', 'The exact titled reply-source window changed. Request a fresh source view.');
+          }
+        } else {
+          current = await inspectExactMainWindow(api, pending.target);
+        }
       } catch (error) {
         this.visual.pendingReplySources.delete(token);
         throw error;
@@ -799,7 +812,7 @@ export class LineUi {
   }
 
   async #run(kind, fn) {
-    return this.runOperation(kind, fn);
+    return withLineUiMetrics(() => this.runOperation(kind, fn));
   }
 
   async #withVerifiedChat(chatName, callback, { screenshot = false, expectedChatType } = {}) {
@@ -2534,17 +2547,18 @@ function isWindowScreenshotPoint(value) {
 }
 
 async function writeDraft(api, target, desiredValue, expectedDraft, composerConfig) {
-  const initial = await readComposer(api, target, composerConfig);
-  assertDraftMayChange(initial.composer.value, expectedDraft);
-  if (initial.composer.value === desiredValue) {
-    return { changed: false, raw: undefined, composerVerification: initial.composer.verification };
-  }
-
   const write = await runUiInput(api, target, state => {
     const composer = findComposer(state, composerConfig);
     assertDraftMayChange(composer.value, expectedDraft);
+    if (composer.value === desiredValue) {
+      return { skipInput: true, composerVerification: composer.verification };
+    }
     return { element: composer.element };
   }, 'set_value', { value: desiredValue }, { guard: composerConfig?.guard });
+
+  if (write.inputSkipped) {
+    return { changed: false, raw: undefined, composerVerification: write.resolved.composerVerification };
+  }
 
   let after;
   try {

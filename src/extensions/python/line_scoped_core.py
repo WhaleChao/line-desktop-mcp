@@ -17,6 +17,8 @@ class ReaderError(Exception):
 
 
 def validate_scope(args):
+    if isinstance(args, dict) and args.get('mode') == 'chatCandidates':
+        return validate_candidate_scope(args)
     if isinstance(args, dict) and args.get('mode') == 'recentChats':
         return validate_recent_scope(args)
     if not isinstance(args, dict) or set(args) - {'chatName', 'chatType', 'dateFrom', 'dateTo', 'messageLimit', 'query', 'cursor', 'mediaMode', 'mediaSourceRefs', 'identityOnly', 'guiIdentityOnly', 'guiCandidateOnly', 'groupCandidateOnly', 'expectedChatRef', 'expectedOwnSenderRef', 'requireUniqueName', 'boundDirect'}:
@@ -107,6 +109,50 @@ def validate_recent_scope(args):
         raise ReaderError('INVALID_SCOPE')
     return {'mode': 'recentChats', 'days': args['days'], 'limit': limit,
             **({'query': query} if query is not None else {})}
+
+
+def validate_candidate_scope(args):
+    if (not isinstance(args, dict) or set(args) - {'mode', 'chatName', 'limit'}
+            or args.get('mode') != 'chatCandidates'):
+        raise ReaderError('INVALID_SCOPE')
+    name, limit = args.get('chatName'), args.get('limit', 20)
+    if (not isinstance(name, str) or not 1 <= len(name) <= 200 or name != name.strip()
+            or any(unicodedata.category(c) == 'Cc' for c in name)
+            or type(limit) is not int or not 1 <= limit <= 20):
+        raise ReaderError('INVALID_SCOPE')
+    return {'mode': 'chatCandidates', 'chatName': name, 'limit': limit}
+
+
+def read_chat_candidates(connection, args):
+    scope = validate_candidate_scope(args)
+    limit, name = scope['limit'], scope['chatName']
+    candidates = {}
+    groups = connection.execute(
+        'SELECT _chatMid FROM _groupChat WHERE _chatName = ? ORDER BY _chatMid LIMIT ?',
+        (name, limit + 1)).fetchall()
+    contacts = connection.execute(
+        'SELECT c._mid, CASE WHEN h._id IS NULL THEN 0 ELSE 1 END '
+        'FROM _contact c LEFT JOIN _chat h ON h._id = c._mid AND h._midType = 0 '
+        'WHERE c._displayNameOverridden = ? OR '
+        "((c._displayNameOverridden IS NULL OR c._displayNameOverridden = '') AND c._displayName = ?) "
+        'ORDER BY c._mid LIMIT ?', (name, name, limit + 1)).fetchall()
+    for kind, rows in (('group', groups), ('direct', contacts)):
+        for row in rows:
+            if (not isinstance(row, (tuple, list)) or len(row) != (1 if kind == 'group' else 2)
+                    or not _valid_gui_inventory_id(row[0])
+                    or (kind == 'direct' and (type(row[1]) is not int or row[1] not in (0, 1)))):
+                raise ReaderError('GUI_IDENTITY_ROW_INVALID')
+            ref = reference('chat', row[0])
+            candidate = {'chatRef': ref, 'chatName': name, 'chatType': kind,
+                         'existingChat': True if kind == 'group' else bool(row[1])}
+            if ref in candidates and candidates[ref] != candidate:
+                raise ReaderError('GUI_IDENTITY_CONFLICT')
+            candidates[ref] = candidate
+    ordered = sorted(candidates.values(), key=lambda item: (not item['existingChat'], item['chatType'], item['chatRef']))
+    return {'ok': True, 'chatName': name, 'ownSenderRef': own_sender_ref(connection),
+            'candidates': ordered[:limit], 'hasMore': len(ordered) > limit or len(groups) > limit or len(contacts) > limit,
+            'scope': {'kind': 'local_chat_candidates', 'requested': scope},
+            'warnings': ['Identity metadata only; no messages or media read. Candidate selection is not GUI or send proof.']}
 
 
 def cursor_scope(args):
@@ -567,6 +613,8 @@ def read_recent_chats(connection, args, *, now=None):
 def read_scoped(connection, args, snapshot, media_resolver=None, *,
                 message_budget_bytes=3*1024*1024, preview_budget_bytes=1024*1024, media_item_limit=20):
     """connection.execute(sql, parameters).fetchall(); only fixed, scoped SQL."""
+    if isinstance(args, dict) and args.get('mode') == 'chatCandidates':
+        return read_chat_candidates(connection, args)
     if isinstance(args, dict) and args.get('mode') == 'recentChats':
         return read_recent_chats(connection, args)
     args, start, end = validate_scope(args)

@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3.8 — 2026-10-14 (Asia/Taipei)
+
+- Add bounded exact-name identity candidates with opaque chat/account references and existing-chat status, without reading messages or media. Paired references can open a unique existing direct chat despite unopened-name collisions; send-context verification and collision refusals remain required.
+- Remove a redundant pre-input draft snapshot while retaining complete Unicode/multiline value checks, expected-draft protection, fresh chat guards and post-input readback. Optional development metrics contain fixed counts/durations only and are disabled by default.
+- Fix reply-source confirmation for an already verified independent chat window. Recheck the exact HWND/PID/title and source pixels; changed or minimized windows still refuse without input.
+- Document the observed guided Unsend completion path and foreground fallback after a verified background NO-OP. Recall remains guided UI, not a new automatic recall endpoint.
+- Align package and shrinkwrap root versions. No dependency changes.
+
+Validation and remaining UI limits are recorded in the [release notes](docs/releases/v3.3.8.en.md) and [targeted validation](docs/VALIDATION_v3.3.8.md).
+
 ## 3.3.7 — 2026-10-13 (Asia/Taipei)
 
 - Preserve direct-chat context verification when a growing multiline composer moves the unchanged date and two newest message rows vertically. All original context/date/message pixel hashes must still match, every row must remain fully visible, and window, paired identity, scoped page and expiry checks remain unchanged.

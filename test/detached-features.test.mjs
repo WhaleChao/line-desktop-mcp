@@ -290,8 +290,8 @@ test('detached draft writing selects the rich composer, not the Search Edit', as
   const written = opened.map(item => item.element_index === 90
     ? { ...item, value: 'draft only' } : item);
   const { ui, calls } = environment([
-    snapshot(opened, 'inspect'), snapshot(opened, 'initial-read'),
-    snapshot(opened, 'write-before'), snapshot(written, 'write-after'),
+    snapshot(opened, 'inspect'), snapshot(opened, 'write-before'),
+    snapshot(written, 'write-after'),
   ]);
   const result = await ui.setDraft({ chatName: CHAT, message: 'draft only' });
   assert.equal(result.changed, true);

@@ -19,16 +19,17 @@ const receipt=()=>({sourceRef:'message:new',sourceMessageId:'123',sourceTimestam
 const args={chatName,message,chatType:'group',autoSend:true,idempotencyKey:'synthetic-intent'};
 
 function environment({draft='', pressError=false, saveError=false, old=null,
-  switchAtSnapshot=Infinity, emitReceipt=true, setError=null,
+  switchAtSnapshot=Infinity, switchAfterDraft=false, emitReceipt=true, setError=null,
   identityError=null, backendError=null, identityChangeAtRead=Infinity,
   senderChangeAtRead=Infinity}={}) {
   let reads=0, presses=0, writes=0, snapshots=0, journalWrites=0, journal=old, readScopes=[];
+  const switched=()=>snapshots>=switchAtSnapshot || (switchAfterDraft && writes>0);
   const window={app_name:'LINE.exe',title:chatName,pid:42,window_id:99,is_on_screen:true,minimized:false};
   const api={tools:new Set(['list_windows','get_window_state','set_value','press_key']),async call(name, input){
     if(name==='list_windows')return {windows:[{...window,
-      title:snapshots>=switchAtSnapshot?'另一個聊天室':chatName}]};
+      title:switched()?'另一個聊天室':chatName}]};
     if(name==='get_window_state')return {snapshot_id:`s${++snapshots}`,
-      window:{title:snapshots>=switchAtSnapshot?'另一個聊天室':chatName},elements:[
+      window:{title:switched()?'另一個聊天室':chatName},elements:[
       {element_index:1,element_token:`e${snapshots}`,role:'Edit',semantic_role:'composer',enabled:true,value:draft}]};
     if(name==='set_value'){writes++;if(setError)throw setError;draft=input.value;return {effect:'confirmed'};}
     if(name==='press_key'){presses++;draft='';if(pressError)throw new Error('synthetic post-dispatch transport failure');return {effect:'confirmed'};}
@@ -117,7 +118,7 @@ test('a truncated 30-record receipt page must overlap the pre-send tail',()=>{
 });
 
 test('a chat switch after draft input refuses Return and records a staged draft',async()=>{
-  const env=environment({switchAtSnapshot:4});
+  const env=environment({switchAfterDraft:true});
   await assert.rejects(sendPlainText(env.ui,args,env.dependencies),error=>
     error.code==='LINE_UI_POSTCONDITION_UNAVAILABLE' && error.details.status==='DRAFTED'
       && error.details.sendDispatched===false && error.details.draftMayBeStaged===true
@@ -290,7 +291,7 @@ test('active catalogue is compact and versioned; legacy handlers remain callable
   assert.equal(extension.tools,ACTIVE_TOOL_DESCRIPTORS);
   const result=await extension.call('get_line_capabilities',{});
   const caps=JSON.parse(result.content[0].text);
-  assert.equal(caps.version,EXTENSION_VERSION);assert.equal(caps.toolCount,34);
+  assert.equal(caps.version,EXTENSION_VERSION);assert.equal(caps.toolCount,35);
   assert.deepEqual(caps.tools,extension.tools.map(tool=>tool.name));
   for(const name of ['prepare_line_group_chat','prepare_line_direct_chat','get_line_chatroom_history_short']){
     assert(!caps.tools.includes(name));assert(extension.handles(name));

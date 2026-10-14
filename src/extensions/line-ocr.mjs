@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { LineToolError } from './line-runtime.mjs';
+import { countLineUiMetric, startLineUiPhase } from './line-ui-metrics.mjs';
 
 const execFile = promisify(execFileCallback);
 const WINDOWS_POWERSHELL = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
@@ -310,7 +311,9 @@ function collectOcrLabelMatches(ocr, labels, limit = Infinity) {
 }
 
 async function invokeOcr(inputPath, config) {
-  return invokeOcrBridge(inputPath, config, ['-PaddingPixels', String(config.paddingPixels)]);
+  const stopOcr = startLineUiPhase('ocr');
+  try { return await invokeOcrBridge(inputPath, config, ['-PaddingPixels', String(config.paddingPixels)]); }
+  finally { stopOcr(); }
 }
 
 async function invokeFingerprint(inputPath, region, config, options) {
@@ -324,7 +327,9 @@ async function invokeFingerprint(inputPath, region, config, options) {
   if (options.includeImage) {
     extraArgs.push('-IncludeImage', '-MaxReturnedImageBytes', String(FINGERPRINT_IMAGE_MAX_BYTES));
   }
-  return invokeOcrBridge(inputPath, config, extraArgs);
+  const stopFingerprint = startLineUiPhase('fingerprint');
+  try { return await invokeOcrBridge(inputPath, config, extraArgs); }
+  finally { stopFingerprint(); }
 }
 
 async function invokeOcrBridge(inputPath, config, extraArgs = []) {
@@ -344,6 +349,7 @@ async function invokeOcrBridge(inputPath, config, extraArgs = []) {
 
   let stdout;
   try {
+    countLineUiMetric('processStartAttempts');
     ({ stdout } = await execFile(WINDOWS_POWERSHELL, args, {
       windowsHide: true,
       timeout: config.timeoutMs,

@@ -492,6 +492,22 @@ test('accepts an exact detached LINE window title without mistaking a sidebar en
   assert.equal(result.confidence, 'high');
 });
 
+test('selected chat opening carries paired refs without claiming title is ID or send proof', async () => {
+  const detached = { ...TARGET, title: CHAT, window_id: 100 };
+  const { ui, calls } = fakeEnvironment({windows:[TARGET,detached],states:[state([], 'selected-detached')]});
+  const selected={chatName:CHAT,chatType:'direct',expectedChatRef:CHAT_REF,expectedOwnSenderRef:'sender:'+'a'.repeat(24)};
+  let seen;
+  ui.readNamedIdentity=async args=>{seen=args;return {chatRef:CHAT_REF,kind:'direct',ownSenderRef:selected.expectedOwnSenderRef,requiresSendContext:true};};
+  const result=await ui.openChat(selected);
+  assert.deepEqual(seen,selected);
+  assert.equal(result.success,true);
+  assert.equal(result.chatRef,CHAT_REF);
+  assert.equal(result.ownSenderRef,selected.expectedOwnSenderRef);
+  assert.equal(result.uiIdentityVerified,false);
+  assert.equal(result.requiresSendContext,true);
+  assert.deepEqual(actionCalls(calls),[]);
+});
+
 test('uses the observed detached rich-composer structure to distinguish an empty draft from unreadable UI', async () => {
   const detached = { ...TARGET, title: CHAT, window_id: 100 };
   const emptyComposer = () => [
@@ -506,7 +522,6 @@ test('uses the observed detached rich-composer structure to distinguish an empty
     windows: [detached],
     states: [
       state(emptyComposer(), 'inspect'),
-      state(emptyComposer(), 'initial-read'),
       state(emptyComposer(), 'write-before'),
       state(draftedComposer(), 'write-after'),
     ],
@@ -552,7 +567,6 @@ test('setDraft uses snapshot-bound background set_value and verifies the full re
   const { ui, calls, locks } = fakeEnvironment({
     states: [
       state([header(), composer('')], 'inspect'),
-      state([header(), composer('')], 'initial-read'),
       state([header(), composer('')], 'write-before'),
       state([header(), composer('ready to review')], 'write-after'),
     ],
@@ -568,7 +582,7 @@ test('setDraft uses snapshot-bound background set_value and verifies the full re
   assert.equal(calls.some(call => call.name === 'press_key'), false);
   assert.deepEqual(locks, ['ui-set-draft']);
   assert.deepEqual(calls.map(call => call.name), [
-    'list_windows', 'get_window_state', 'get_window_state', 'get_window_state', 'set_value', 'get_window_state',
+    'list_windows', 'get_window_state', 'get_window_state', 'set_value', 'get_window_state',
   ]);
 });
 
@@ -576,7 +590,6 @@ test('a no-op draft write is not reported as success', async () => {
   const { ui, calls } = fakeEnvironment({
     states: [
       state([header(), composer('')], 'inspect'),
-      state([header(), composer('')], 'initial-read'),
       state([header(), composer('')], 'write-before'),
       state([header(), composer('')], 'write-after'),
     ],
@@ -590,12 +603,23 @@ test('a no-op draft write is not reported as success', async () => {
   assert.equal(calls.some(call => call.name === 'press_key'), false);
 });
 
+test('a complete multiline draft already matched in the fresh state causes no input or extra snapshot', async () => {
+  const text = '中文🙂\nhttps://example.com/\nsecond line';
+  const { ui, calls } = fakeEnvironment({ states: [
+    state([header(), composer(text)], 'inspect'),
+    state([header(), composer(text)], 'fresh-before'),
+  ] });
+  const result = await ui.setDraft({ chatName: CHAT, message: text, expectedDraft: text });
+  assert.equal(result.changed, false);
+  assert.equal(calls.filter(call => call.name === 'get_window_state').length, 2);
+  assert.deepEqual(actionCalls(calls), []);
+});
+
 test('a CUA write failure stops without an ungrounded follow-up action', async () => {
   const expected = new Error('driver refused write');
   const { ui, calls } = fakeEnvironment({
     states: [
       state([header(), composer('')], 'inspect'),
-      state([header(), composer('')], 'initial-read'),
       state([header(), composer('')], 'write-before'),
     ],
     handlers: {
@@ -605,7 +629,7 @@ test('a CUA write failure stops without an ungrounded follow-up action', async (
 
   await assert.rejects(ui.setDraft({ chatName: CHAT, message: 'will not retry' }), error => error === expected);
   assert.deepEqual(calls.map(call => call.name), [
-    'list_windows', 'get_window_state', 'get_window_state', 'get_window_state', 'set_value',
+    'list_windows', 'get_window_state', 'get_window_state', 'set_value',
   ]);
 });
 
@@ -904,6 +928,39 @@ test('a caller-confirmed visual header treats a member-count suffix as group pro
   );
   assert.deepEqual(automationCalls, []);
   assert.equal(calls.some(call => ['right_click', 'click', 'set_value'].includes(call.name)), false);
+});
+
+test('detached reply source confirmation retains the exact titled window', async () => {
+  const source = { sourceRef: 'message:0123456789abcdef01234567', text: '完整引用來源',
+    sender: '測試員', date: '2026-10-14', time: '12:16' };
+  const detached = { ...TARGET, title: CHAT, window_id: 100 };
+  const visual = () => {
+    const result = replySourceVisualState({ text: source.text });
+    const frames = { 40: { x: 0, y: 0, w: 400, h: 600 }, 41: { x: 0, y: 0, w: 400, h: 50 },
+      42: { x: 0, y: 50, w: 400, h: 550 }, 2: { x: 10, y: 500, w: 380, h: 60 },
+      5: { x: 10, y: 500, w: 380, h: 60 } };
+    return { ...result, elements: result.elements.map(item => frames[item.element_index]
+      ? { ...item, frame: frames[item.element_index] } : item) };
+  };
+  for (const change of [null, 'window', 'title', 'minimized']) {
+    const windows = [{ ...detached }];
+    const { ui, calls } = fakeEnvironment({ windows, states: Array.from({ length: 4 }, visual), ...visualHelpers() });
+    const pending = await ui.getReplySourceTarget({ chatRef: CHAT_REF, chatName: CHAT, chatType: 'direct', source });
+    if (change === 'window') windows[0].window_id = 101;
+    if (change === 'title') windows[0].title = '另一個聊天室';
+    if (change === 'minimized') windows[0].minimized = true;
+    const confirm = () => ui.confirmReplySourceTarget({ chatName: CHAT, token: pending.replySourceTarget.token,
+      observedSource: source, sourceRect: { x: 60, y: 130, width: 140, height: 72 },
+      sourcePoint: { x: 120, y: 164 } });
+    if (change) await assert.rejects(confirm(), { code: 'LINE_REPLY_SOURCE_STALE' });
+    else {
+      const result = await confirm();
+      assert.equal(result.success, true);
+      assert.equal(result.localSourceRef, source.sourceRef);
+      assert.equal(result.uiSourceRefVerified, false);
+    }
+    assert.equal(actionCalls(calls).length, 0);
+  }
 });
 
 test('a visually bound reply never fakes quote verification when the post-action UI lacks an accessible quote marker', async () => {
@@ -1725,7 +1782,7 @@ test('a caller-confirmed main header accepts an unlabeled empty rich composer on
 
 test('a main structural composer does not write a global-search Edit', async () => {
   const message = 'only the main composer may receive this';
-  const states = Array.from({ length: 8 }, (_, index) => currentMainVisualState({
+  const states = Array.from({ length: 7 }, (_, index) => currentMainVisualState({
     suffix: `scoped-write-${index}`,
     includeGlobalSearch: true,
   }));
@@ -1772,7 +1829,6 @@ test('a semantic main header switch before set_value refuses the mutation', asyn
   const { ui, calls } = fakeEnvironment({
     states: [
       state([header(), composer('')], 'inspect'),
-      state([header(), composer('')], 'read-before-write'),
       state([headerFor('另一個聊天室'), composer('')], 'switched-before-set-value'),
     ],
   });
@@ -1790,7 +1846,6 @@ test('a chat switch after set_value cannot verify a draft in another chat', asyn
     const { ui, calls } = fakeEnvironment({
       states: [
         state([header(), composer('')], 'inspect'),
-        state([header(), composer('')], 'write-initial'),
         state([header(), composer('')], 'write-before'),
         state([headerFor('另一個聊天室'), composer(text)], 'switched-after-write'),
       ],
@@ -1810,7 +1865,6 @@ test('file-picker failure after an optional draft is reported as partial local s
     states: [
       state([header(), composer('')], 'inspect'),
       state([header(), composer('')], 'stage-initial'),
-      state([header(), composer('')], 'optional-write-initial'),
       state([header(), composer('')], 'optional-write-before'),
       state([header(), composer('attachment note')], 'optional-write-after'),
       state([header(), composer('attachment note')], 'fresh-before-picker'),

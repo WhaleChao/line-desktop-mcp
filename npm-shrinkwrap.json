@@ -1,12 +1,12 @@
 {
   "name": "line-desktop-mcp",
-  "version": "3.3.5",
+  "version": "3.3.8",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "line-desktop-mcp",
-      "version": "3.3.5",
+      "version": "3.3.8",
       "license": "MIT",
       "os": [
         "win32",

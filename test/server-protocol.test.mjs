@@ -79,17 +79,18 @@ test('default history and manual send use the original handlers and response sha
   ]);
 });
 
-test('opt-in exposes 33 active unique tools and validates history before any automation', async t => {
+test('opt-in exposes 35 active unique tools and validates history before any automation', async t => {
   const { client, calls } = await connect(t, { extensionsEnabled: true, runtimePlatform: 'win32' });
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 33);
-  assert.equal(new Set(tools.map(tool => tool.name)).size, 33);
+  assert.equal(tools.length, 35);
+  assert.equal(new Set(tools.map(tool => tool.name)).size, 35);
   assert.ok(tools.some(tool => tool.name === 'send_file_manual'));
+  assert.equal(tools.find(tool => tool.name === 'list_line_chat_candidates').annotations.readOnlyHint, true);
   const capabilities = body(await client.callTool({ name: 'get_line_capabilities', arguments: {} }));
-  assert.equal(capabilities.capabilities.length, 38);
+  assert.equal(capabilities.capabilities.length, 39);
   const chatOpen = capabilities.capabilities.find(capability => capability.id === 'chat_open');
   assert.match(chatOpen.name, /開啟或沿用/u);
-  assert.match(chatOpen.limit, /checks the final exact title/u);
+  assert.match(chatOpen.limit, /unique visible search result and final title/u);
   assert.deepEqual(calls, []);
   const invalid = await client.callTool({ name: 'get_line_chat_messages', arguments: { chatName: 'Example Chat', date: '2026-02-30' } });
   assert.equal(invalid.isError, true);

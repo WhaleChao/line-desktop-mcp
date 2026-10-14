@@ -88,6 +88,15 @@ export function validateRecentScope(args) {
     ...(args.query === undefined ? {} : { query: args.query }) };
 }
 
+export function validateCandidateScope(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)
+      || Object.keys(args).some(key => !['chatName', 'limit'].includes(key))) throw fail('LINE_INVALID_ARGUMENT');
+  requireChat(args.chatName);
+  if (/\p{Cc}/u.test(args.chatName) || !Number.isSafeInteger(args.limit ?? 20)
+      || (args.limit ?? 20) < 1 || (args.limit ?? 20) > 20) throw fail('LINE_INVALID_ARGUMENT');
+  return { mode: 'chatCandidates', chatName: args.chatName, limit: args.limit ?? 20 };
+}
+
 function validateCursor(value, scope) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 2048 || !/^[A-Za-z0-9_-]+$/u.test(value)) throw fail('INVALID_CURSOR');
   let token;
@@ -121,7 +130,9 @@ export function runReaderProcess(payload, options = {}) {
   try {
     // Internal identity flags are accepted here only because callers have
     // already passed through one of the private identity wrappers below.
-    scope = payload?.mode === 'recentChats'
+    scope = payload?.mode === 'chatCandidates'
+      ? validateCandidateScope(Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'mode')))
+      : payload?.mode === 'recentChats'
       ? { mode: 'recentChats', ...validateRecentScope(Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'mode'))) }
       : validateLocalScope(payload, { allowIdentityOnly: true, allowGuiIdentityOnly: true,
         allowGuiCandidateOnly: true, allowGroupCandidateOnly: true, allowBoundDirect: true });
@@ -620,6 +631,39 @@ export async function readLocalLineMessages(args, { runProcess = runReaderProces
     }
   }
   return result;
+}
+
+export async function readLocalLineChatCandidates(args, { runProcess = runReaderProcess } = {}) {
+  const scope = validateCandidateScope(args);
+  const output = await runProcess(scope);
+  let result;
+  try {
+    if (typeof output?.stdout !== 'string' || Buffer.byteLength(output.stdout) > MAX_OUTPUT) throw new Error();
+    result = JSON.parse(output.stdout);
+  } catch { throw fail('LOCAL_READER_INVALID_RESULT'); }
+  if (output.code !== 0 || result?.ok !== true) {
+    const allowed = new Set(['GUI_IDENTITY_ROW_INVALID', 'GUI_IDENTITY_CONFLICT', 'LINE_BUILD_UNVERIFIED',
+      'SOURCE_BUSY', 'SESSION_KEY_UNAVAILABLE', 'SESSION_KEY_CHANGED', 'DATABASE_READ_FAILED', 'SOURCE_TOO_LARGE',
+      'LINE_PROCESS_UNAVAILABLE', 'MAIN_DATABASE_AMBIGUOUS', 'SNAPSHOT_CLEANUP_FAILED']);
+    throw fail(allowed.has(result?.code) ? result.code : 'LOCAL_READER_FAILED');
+  }
+  if (result.chatName !== scope.chatName || result.scope?.kind !== 'local_chat_candidates'
+      || !result.scope.requested || Object.keys(result.scope.requested).sort().join(',') !== 'chatName,limit,mode'
+      || result.scope.requested.mode !== scope.mode || result.scope.requested.chatName !== scope.chatName
+      || result.scope.requested.limit !== scope.limit
+      || (result.ownSenderRef !== null && !/^sender:[0-9a-f]{24}$/u.test(result.ownSenderRef ?? ''))
+      || typeof result.hasMore !== 'boolean' || !Array.isArray(result.candidates)
+      || result.candidates.length > scope.limit
+      || new Set(result.candidates.map(item => item?.chatRef)).size !== result.candidates.length
+      || result.candidates.some(item => !item || Object.keys(item).sort().join(',') !== 'chatName,chatRef,chatType,existingChat'
+        || item.chatName !== scope.chatName || !/^chat:[0-9a-f]{24}$/u.test(item.chatRef ?? '')
+        || !['direct', 'group'].includes(item.chatType) || typeof item.existingChat !== 'boolean'
+        || (item.chatType === 'group' && item.existingChat !== true))) throw fail('LOCAL_READER_SCOPE_MISMATCH');
+  // Return only validated identity metadata, never arbitrary reader fields.
+  return { ok: true, chatName: scope.chatName, ownSenderRef: result.ownSenderRef,
+    candidates: result.candidates, hasMore: result.hasMore, scope: result.scope,
+    ...(typeof result.retrievedAt==='string' && Number.isFinite(Date.parse(result.retrievedAt))
+      ? {retrievedAt:result.retrievedAt}:{}) };
 }
 
 export async function readLocalLineRecentChats(args, { runProcess = runReaderProcess } = {}) {

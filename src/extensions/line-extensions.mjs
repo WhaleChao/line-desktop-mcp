@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { parseLineHistory, selectLineMessages, formatLineHistory } from './line-history.mjs';
 import { LINE_CAPABILITIES, LINE_SOURCES, LINE_WORKFLOWS } from './line-capabilities.mjs';
 import { LineUi } from './line-ui.mjs';
-import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDirectIdentity, readLocalLineRecentChats, validateLocalScope } from './line-local-reader.mjs';
+import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDirectIdentity, readLocalLineRecentChats, readLocalLineChatCandidates, validateLocalScope } from './line-local-reader.mjs';
 import { readOpenLinePollState } from './line-poll-reader.mjs';
 import { readLineClientStatus } from './line-client-status.mjs';
 import { LINE_WORKFLOW_PLAN_PROPERTIES, LINE_WORKFLOW_PLAN_SCHEMA, prepareLineWorkflow } from './line-workflow-plan.mjs';
@@ -142,7 +142,17 @@ export const LINE_TOOL_DESCRIPTORS = [
     inputSchema: { type: 'object', properties: LINE_WORKFLOW_PLAN_PROPERTIES, required: ['workflow', 'chatName'], additionalProperties: false, ...LINE_WORKFLOW_PLAN_SCHEMA },
   },
   descriptor('get_line_status', 'Check the existing LINE/GUI runtime, verified client build and process-instance metadata without reading chats or scanning memory. Unknown builds refuse local chat reading until verified. Presence cannot establish login, connectivity or delivery.', {}),
-  descriptor('open_line_chat', 'Open or reuse the exact uniquely named chat in a titled window. Resolves the local identity, searches when needed and verifies the final window title. May focus LINE; does not type or send messages.', { chatName: chat }, ['chatName'], uiOnly),
+  descriptor('list_line_chat_candidates', 'List at most 20 identity candidates for one exact user-authorized chat name. Returns opaque chat/account refs and distinguishes existing chats from unopened contacts. Reads no messages, does no GUI action and never selects or sends. hasMore forbids assuming the list is complete.', {
+    chatName:chat,limit:{type:'integer',minimum:1,maximum:20,default:20},
+  }, ['chatName'], readOnly),
+  descriptor('open_line_chat', 'Open or reuse the exact chat in a titled window. Name-only requests require global uniqueness. A selected direct chat may carry paired chat/account refs from list_line_chat_candidates; it must still be unique among existing name families, and UI search must prove one safe visible result. May focus LINE. Title verification is not chat-ID or send proof; requiresSendContext preserves the existing independent context check before sending. Does not type or send messages.', {
+    chatName: chat,chatType,
+    expectedChatRef:{type:'string',pattern:'^chat:[0-9a-f]{24}$'},
+    expectedOwnSenderRef:{type:'string',pattern:'^sender:[0-9a-f]{24}$'},
+  }, ['chatName'], uiOnly, {allOf:[
+    {if:{anyOf:[{required:['expectedChatRef']},{required:['expectedOwnSenderRef']}]},
+      then:{required:['expectedChatRef','expectedOwnSenderRef','chatType'],properties:{chatType:{enum:['direct','group']}}}},
+  ]}),
   descriptor('get_line_chat_messages', 'Read one exact chat. A date or complete dateFrom/dateTo range reads one bounded local DB page (at most 31 days) without GUI and returns freshness/pagination; missing dates use the loaded LINE UI history window. Neither source proves complete server history.', bounds, ['chatName'], uiOnly),
   descriptor('search_line_chat_messages', 'Search one exact chat. A date or complete range uses one bounded local DB page without GUI; query is a case-sensitive literal reader filter and sender filters only that page. Local kind filtering refuses because kind is unverified. Missing dates search the loaded UI history window. Zero matches do not prove complete server absence.', { ...filter, query: text }, ['chatName', 'query'], uiOnly),
   descriptor('export_line_chat_history', 'Export one bounded authorized chat page to a new TXT/JSON/CSV file. Explicit dates use local DB without GUI; missing dates use loaded UI history. Local sender filtering is page-only and kind filtering refuses. TXT/CSV project five columns; JSON preserves local fields and metadata. Absolute path required; refuses overwrites and reparse paths. Not a restorable backup.', { ...filter, outputPath: { type: 'string', minLength: 1, maxLength: 4096 }, format: { type: 'string', enum: ['txt', 'json', 'csv'] } }, ['chatName', 'outputPath', 'format'], uiOnly),
@@ -285,7 +295,7 @@ const LEGACY_TOOL_NAMES = new Set(['prepare_line_direct_chat', 'prepare_line_gro
   'get_line_chatroom_history_short', 'get_line_chatroom_history_default', 'get_line_chatroom_history_long']);
 export const ACTIVE_TOOL_DESCRIPTORS = LINE_TOOL_DESCRIPTORS.filter(tool => !LEGACY_TOOL_NAMES.has(tool.name));
 
-export function createLineExtensions(automation, { ui, now = () => new Date(), fileSystem = fs, localReader = readLocalLineMessages, localIdentityReader = readLocalLineChatIdentity, boundIdentityReader = readLocalLineBoundDirectIdentity, recentReader = readLocalLineRecentChats, pollReader = readOpenLinePollState, clientStatus = readLineClientStatus, forwardTransaction } = {}) {
+export function createLineExtensions(automation, { ui, now = () => new Date(), fileSystem = fs, localReader = readLocalLineMessages, localIdentityReader = readLocalLineChatIdentity, boundIdentityReader = readLocalLineBoundDirectIdentity, recentReader = readLocalLineRecentChats, candidateReader = readLocalLineChatCandidates, pollReader = readOpenLinePollState, clientStatus = readLineClientStatus, forwardTransaction } = {}) {
   ui ??= typeof automation?.getVerifiedUi === 'function'
     ? automation.getVerifiedUi()
     : new LineUi({ automation });
@@ -453,6 +463,7 @@ export function createLineExtensions(automation, { ui, now = () => new Date(), f
         localReader: localReader.status === 'fulfilled' ? localReader.value
           : { ok: false, code: 'LINE_CLIENT_STATUS_UNAVAILABLE' } };
     },
+    list_line_chat_candidates: async args => candidateReader(args),
     open_line_chat: async args => ui.openChat(args),
     prepare_line_direct_chat: async args => ui.prepareDirectChat(args),
     prepare_line_group_chat: async args => ui.prepareGroupChat(args),

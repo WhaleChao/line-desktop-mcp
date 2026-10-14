@@ -8,9 +8,9 @@
 
 [繁體中文](README.md) · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [ภาษาไทย](docs/README.th.md) · [Bahasa Indonesia](docs/README.id.md)
 
-[v3.3.7 更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
+[v3.3.8 更新說明](docs/releases/README.md) · [安裝指南](docs/quickstart-windows.md) · [工具與限制](docs/windows-extensions.md)
 
-**v3.3.7 — 長文輸入後核對修正：** 輸入框變高時，允許完整相同的日期與訊息畫面上下移動；仍核對全部原始像素、身分與完整草稿，不重播不確定的操作。[更新說明](docs/releases/v3.3.7.zh-TW.md)
+**v3.3.8 — 聊天室選取與引用核對修正：** 列出確切名稱候選，以聊天室／帳號參照開啟唯一既有直聊；減少草稿核對的重複快照，修正獨立視窗引用確認，補上收回的實測操作指引。[更新說明](docs/releases/v3.3.8.zh-TW.md)
 
 **v3.3.5 — 混合搜尋 OCR 修正：** 分類各自裁切、補足標題範圍與 OCR 白邊，避免唯一聊天室因分類標頭漏讀被拒絕；完整名稱與身分核對不變。[更新說明](docs/releases/v3.3.5.zh-TW.md)
 

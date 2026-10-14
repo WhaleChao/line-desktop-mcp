@@ -1,8 +1,12 @@
-# v3.3.7 release notes
+# v3.3.8 release notes
 
-[繁體中文更新說明](v3.3.7.zh-TW.md) · [English release notes](v3.3.7.en.md)
+[繁體中文更新說明](v3.3.8.zh-TW.md) · [English release notes](v3.3.8.en.md)
 
 ## Previous release
+
+### v3.3.7 release notes
+
+[繁體中文更新說明](v3.3.7.zh-TW.md) · [English release notes](v3.3.7.en.md)
 
 ### v3.3.6 release notes
 

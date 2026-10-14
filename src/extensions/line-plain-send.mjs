@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { LineToolError } from './line-runtime.mjs';
-import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDirectMessages, runReaderProcess } from './line-local-reader.mjs';
+import { readLocalLineMessages, readLocalLineChatIdentity, readLocalLineBoundDirectMessages, readLocalLineBoundDirectIdentity, runReaderProcess } from './line-local-reader.mjs';
 import { hasBoundDirectRefs, boundDirectScope, confirmedBoundDirectScope, inspectBoundDirect } from './line-bound-direct.mjs';
 import { mainLineWindow, snapshot, elementTarget } from './cua-line-client.mjs';
 import { purepngDimensions } from './line-ocr.mjs';
@@ -53,15 +53,34 @@ export function matchReceipt(before, after, message, startedAt) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-export async function readPlainIdentity({chatName}, {readIdentity=readLocalLineChatIdentity}={}) {
+export async function readPlainIdentity({chatName,chatType='auto',expectedChatRef,expectedOwnSenderRef}, {
+  readIdentity=readLocalLineChatIdentity, readBoundIdentity=readLocalLineBoundDirectIdentity,
+}={}) {
+  const bound=expectedChatRef!==undefined || expectedOwnSenderRef!==undefined;
+  if(!['auto','direct','group'].includes(chatType)
+    || (bound && (!['direct','group'].includes(chatType)
+      || !/^chat:[0-9a-f]{24}$/u.test(expectedChatRef??'')
+      || !/^sender:[0-9a-f]{24}$/u.test(expectedOwnSenderRef??''))))
+    fail('LINE_INVALID_ARGUMENT','Selected chat opening requires paired chat/account references and an explicit chat type.');
   const date = day(Date.now());
-  const result = await readIdentity({chatName, chatType:'auto', dateFrom:date, dateTo:date,
-    requireUniqueName:true},
+  const pairedDirect=bound && chatType==='direct';
+  const read=pairedDirect?readBoundIdentity:readIdentity;
+  const result = await read({chatName, chatType, dateFrom:date, dateTo:date,
+    ...(pairedDirect?{messageLimit:1,mediaMode:'metadata'}:{requireUniqueName:true}),
+    ...(bound?{expectedChatRef,expectedOwnSenderRef}:{})},
     {runProcess:scope=>runReaderProcess(scope,{timeoutMs:5000})});
   if(!['direct','group'].includes(result.chatIdentity?.kind)
     || !/^chat:[0-9a-f]{24}$/u.test(result.chatRef ?? ''))
     fail('LINE_CHAT_IDENTITY_UNVERIFIED','No unique local chat identity was resolved.');
-  return Object.freeze({chatRef:result.chatRef,kind:result.chatIdentity.kind});
+  if(bound && result.chatRef!==expectedChatRef) fail('CHAT_IDENTITY_CHANGED','The selected chat identity changed.');
+  if(bound && result.ownSenderRef!==expectedOwnSenderRef) fail('CHAT_ACCOUNT_CHANGED','The selected LINE account changed.');
+  if(chatType!=='auto' && result.chatIdentity.kind!==chatType) fail('CHAT_TYPE_MISMATCH','The selected chat type changed.');
+  if(pairedDirect && (result.chatIdentity.knownNameUnique!==true
+    || typeof result.chatIdentity.globalNameUnique!=='boolean'))
+    fail('LINE_CHAT_IDENTITY_UNVERIFIED','The selected existing direct chat was not uniquely resolved.');
+  return Object.freeze({chatRef:result.chatRef,kind:result.chatIdentity.kind,
+    ...(bound?{ownSenderRef:result.ownSenderRef,
+      requiresSendContext:pairedDirect && !result.chatIdentity.globalNameUnique}:{})});
 }
 
 export async function openExactChat(ui, api, chatName, chatType, check) {
